@@ -130,6 +130,26 @@ a try/catch before doing anything.
 Threads, Add Reactions, and — if reward roles are enabled — **Manage Roles** with the
 bot's role dragged **above** any role it hands out.
 
+### Slash commands don't appear in some channels
+
+Commands are registered **guild-scoped**, so they're available in every channel by
+default — there is **no** channel allowlist in the code. If `/leaderboard`, `/mystats`,
+etc. show in one channel (e.g. a mod channel) but not another (e.g. `#general`), the
+cause is a **Discord server setting**, not the bot. Check, in order:
+
+1. **Integration command permissions** (the usual cause). Server Settings →
+   **Integrations** → *Showcase Feedback Bot* → make sure commands are allowed in
+   **All Channels**, or explicitly add the channels where they're missing. An admin may
+   have restricted the bot to specific channels here.
+2. **Channel permission overrides**. In the affected channel, ensure the relevant role
+   (or `@everyone`) has **Use Application Commands**, and the **bot's role** has **View
+   Channel** + **Send Messages** + **Use Application Commands**. Discord hides an app's
+   commands in channels where the bot can't operate.
+3. **OAuth scope**. The bot must have been invited with the `applications.commands`
+   scope (see above). If not, re-invite it with that scope.
+4. **Re-register**. Run `npm run register` after any command change; guild registration
+   is near-instant.
+
 ---
 
 ## Configuration / env

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { REST, Routes } from 'discord.js';
+import { REST, Routes, InteractionContextType, ApplicationIntegrationType } from 'discord.js';
 import { config, assertConfig } from './config.js';
 import { loadCommands } from './loadCommands.js';
 
@@ -8,7 +8,17 @@ async function main() {
   assertConfig();
 
   const commands = await loadCommands();
-  const body = [...commands.values()].map((c) => c.data.toJSON());
+  // Make the install/usage scope explicit: guild-installed, usable in every guild
+  // channel (including threads). This only sets where a command *can* live — it does
+  // NOT control per-channel visibility. If commands show in some channels but not
+  // others, that's a Discord server setting (Integration command permissions or a
+  // channel permission override), not this payload — see the README troubleshooting.
+  const body = [...commands.values()].map((c) => {
+    c.data
+      .setContexts(InteractionContextType.Guild)
+      .setIntegrationTypes(ApplicationIntegrationType.GuildInstall);
+    return c.data.toJSON();
+  });
 
   const rest = new REST({ version: '10' }).setToken(config.discordToken);
 
