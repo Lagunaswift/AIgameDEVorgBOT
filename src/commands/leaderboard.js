@@ -24,19 +24,18 @@ export async function execute(interaction) {
   const board = await getLeaderboard({ scope, limit: 10 });
 
   const heading =
-    scope === 'week' ? `🏆 Feedback Leaderboard — ${isoWeek()}` : '🏆 Feedback Leaderboard — All time';
+    scope === 'week' ? `<:bot:1521124760220729445> Feedback Leaderboard — ${isoWeek()}` : '<:bot:1521124760220729445> Feedback Leaderboard — All time';
 
   if (board.length === 0) {
     await interaction.editReply(`${heading}\n\nNo points yet. Go leave some helpful feedback!`);
     return;
   }
 
-  const medals = ['🥇', '🥈', '🥉'];
   const lines = board.map((entry, i) => {
-    const rank = medals[i] || `**${i + 1}.**`;
+    const rank = `**${i + 1}.**`;
     const name = entry.commenterTag || `<@${entry.commenterId}>`;
     const pts = entry.points === 1 ? '1 point' : `${entry.points} points`;
-    return `${rank} ${name} — ${pts}`;
+    return `<:coin:1521124800204898386> ${rank} ${name} — ${pts}`;
   });
 
   await interaction.editReply(`${heading}\n\n${lines.join('\n')}`);
