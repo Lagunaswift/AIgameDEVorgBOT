@@ -56,7 +56,7 @@ export async function postWeeklyLeaderboard(client) {
   }
 
   if (board.length === 0) {
-    await channel.send(`<:bot:1521124760220729445> **Feedback Leaderboard — ${week}**\n\nNo points were awarded this week.`);
+    await channel.send(`<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**\n\nNo points were awarded this week.`);
     return;
   }
 
@@ -64,12 +64,12 @@ export async function postWeeklyLeaderboard(client) {
     const rank = `**${i + 1}.**`;
     const name = e.commenterTag || `<@${e.commenterId}>`;
     const pts = e.points === 1 ? '1 point' : `${e.points} points`;
-    return `<:coin:1521124800204898386> ${rank} ${name} — ${pts}`;
+    return `<:helpfulfeedback:1521124800204898386> ${rank} ${name} — ${pts}`;
   });
 
   await channel.send(
     [
-      `<:bot:1521124760220729445> **Feedback Leaderboard — ${week}**`,
+      `<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**`,
       'Thanks to everyone who left helpful feedback! A fresh week starts now.',
       '',
       ...lines,
