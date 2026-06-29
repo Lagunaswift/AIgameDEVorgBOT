@@ -10,7 +10,7 @@ export const data = new SlashCommandBuilder()
   .setDescription('Show showcase posts that need feedback (fewest comments first).');
 
 export async function execute(interaction) {
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   const threads = await listThreadsByMode('showcase');
   if (threads.length === 0) {

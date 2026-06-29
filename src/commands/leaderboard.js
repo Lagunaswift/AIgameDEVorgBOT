@@ -19,7 +19,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const scope = interaction.options.getString('scope') || 'week';
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   const board = await getLeaderboard({ scope, limit: 10 });
 
