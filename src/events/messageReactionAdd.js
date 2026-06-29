@@ -62,7 +62,7 @@ async function handleShowcase({ reaction, user, thread, cfg }) {
     );
     // Optional confirmation react so the commenter sees the point landed.
     try {
-      await comment.react('🏅');
+      await comment.react('1521124760220729445');
     } catch {
       /* non-fatal */
     }

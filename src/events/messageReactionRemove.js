@@ -43,7 +43,7 @@ export async function execute(reaction, user) {
       );
       // Remove the confirmation medal if we added one.
       try {
-        const medal = reaction.message.reactions.cache.find((r) => r.emoji.name === '🏅');
+        const medal = reaction.message.reactions.cache.find((r) => r.emoji.id === '1521124760220729445');
         if (medal) await medal.users.remove(reaction.message.client.user.id);
       } catch {
         /* non-fatal */
