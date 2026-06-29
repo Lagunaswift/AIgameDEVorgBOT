@@ -14,7 +14,7 @@ import { registerForum } from '../services/config.js';
 const pointsCommand = {
   data: new SlashCommandBuilder()
     .setName('points')
-    .setDescription('(Mod) Manage feedback points.')
+    .setDescription('(Mod) Manually adjust feedback points.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((sub) =>
       sub
