@@ -31,7 +31,7 @@ export const config = {
   // We match on id when the value is all digits, otherwise on the unicode name.
   helpfulEmoji: process.env.HELPFUL_EMOJI || '✅',
 
-  minCommentLength: intOr(process.env.MIN_COMMENT_LENGTH, 80),
+  minCommentLength: intOr(process.env.MIN_COMMENT_LENGTH, 0),
   maxPointsPerThreadPerUser: intOr(process.env.MAX_POINTS_PER_THREAD_PER_USER, 2),
 
   leaderboardChannelId: process.env.LEADERBOARD_CHANNEL_ID || null,
