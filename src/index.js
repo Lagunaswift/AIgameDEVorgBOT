@@ -4,7 +4,7 @@ import { Client, GatewayIntentBits, Partials, Collection, Events } from 'discord
 import { config, assertConfig } from './config.js';
 import { initFirebase } from './firebase.js';
 import { loadCommands } from './loadCommands.js';
-import { scheduleWeeklyPost } from './services/weeklyPost.js';
+import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js';
 
 // Event modules, imported once and bound at startup.
 import * as ready from './events/ready.js';
@@ -59,6 +59,12 @@ async function main() {
   client.once(Events.ClientReady, () => {
     if (config.weeklyPostEnabled) {
       scheduleWeeklyPost(client);
+      // Catch up on boot: if the previous week's post never went out (a restart across the
+      // Monday boundary, or a permission error that's since been fixed), post it now. The
+      // per-week marker keeps this to at most one post per week.
+      catchUpWeeklyPost(client).catch((err) =>
+        console.error('[weeklyPost] catch-up failed:', err.message),
+      );
     } else {
       console.log('[startup] weekly post disabled via WEEKLY_POST_ENABLED=false');
     }

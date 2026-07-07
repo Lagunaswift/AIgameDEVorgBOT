@@ -91,6 +91,12 @@ rewardThresholds: [{ points, roleId }]
 
 **`adjustments`** — audit records for manual `/points adjust` overrides.
 
+**`weeklyPosts`** (doc id = ISO week string, e.g. `2026-W26`) — a marker written after the
+weekly leaderboard for that week is successfully sent. Makes the post idempotent: a restart
+across the Monday boundary, a redeploy, or a since-fixed permission error is recovered by a
+boot catch-up that re-posts any week never actually delivered, and never double-posts one
+that was.
+
 ---
 
 ## Slash commands
@@ -103,6 +109,7 @@ rewardThresholds: [{ points, roleId }]
 | `/rescan` | mod | Backfill registration + points from watched forums (downtime recovery). |
 | `/points adjust <user> <amount> <reason>` | mod | Manual point override; writes an audit doc. |
 | `/registerforum <channel> <mode>` | mod | Add a forum to the watched list with a mode. |
+| `/postleaderboard [week]` | mod | Post the weekly leaderboard to the leaderboard channel now. `week` = `previous` (default, matches the automated post) or `current`. Useful for verifying channel permissions and recovering a missed week. |
 
 Mod-only commands are gated by **Manage Server** or the configured `MOD_ROLE_ID`, checked
 in the handler.
@@ -129,6 +136,12 @@ a try/catch before doing anything.
 **Bot permissions**: View Channels, Read Message History, Send Messages, Send Messages in
 Threads, Add Reactions, and — if reward roles are enabled — **Manage Roles** with the
 bot's role dragged **above** any role it hands out.
+
+**Leaderboard channel**: the bot must have **View Channel**, **Send Messages**, and **Use
+External Emojis** (the post uses custom emojis) on the channel set by `LEADERBOARD_CHANNEL_ID`.
+A channel-level permission override beats a server-wide role grant, so check the channel's own
+permissions (and its category, if synced). Missing any of these makes the weekly post fail
+with a `Missing Permissions` error; run `/postleaderboard` after fixing it to re-post the week.
 
 ---
 
