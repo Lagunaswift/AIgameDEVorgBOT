@@ -17,6 +17,11 @@ function intOr(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function parseJson(value, fallback) {
+  if (!value) return fallback;
+  try { return JSON.parse(value); } catch { return fallback; }
+}
+
 export const config = {
   discordToken: process.env.DISCORD_TOKEN,
   clientId: process.env.CLIENT_ID,
@@ -37,6 +42,8 @@ export const config = {
   leaderboardChannelId: process.env.LEADERBOARD_CHANNEL_ID || null,
   modFeedChannelId: process.env.MOD_FEED_CHANNEL_ID || null,
   modRoleId: process.env.MOD_ROLE_ID || null,
+
+  rewardThresholds: parseJson(process.env.REWARD_THRESHOLDS, []),
 
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',
 };

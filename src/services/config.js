@@ -31,7 +31,7 @@ function merge(docData) {
       d.maxPointsPerThreadPerUser ?? envConfig.maxPointsPerThreadPerUser,
     leaderboardChannelId: d.leaderboardChannelId ?? envConfig.leaderboardChannelId,
     modFeedChannelId: d.modFeedChannelId ?? envConfig.modFeedChannelId,
-    rewardThresholds: d.rewardThresholds ?? [],
+    rewardThresholds: d.rewardThresholds ?? envConfig.rewardThresholds,
   };
 }
 
