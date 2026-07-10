@@ -35,6 +35,7 @@ export const config = {
   maxPointsPerThreadPerUser: intOr(process.env.MAX_POINTS_PER_THREAD_PER_USER, 2),
 
   leaderboardChannelId: process.env.LEADERBOARD_CHANNEL_ID || null,
+  modFeedChannelId: process.env.MOD_FEED_CHANNEL_ID || null,
   modRoleId: process.env.MOD_ROLE_ID || null,
 
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',

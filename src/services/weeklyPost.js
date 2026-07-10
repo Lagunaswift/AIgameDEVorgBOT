@@ -1,10 +1,5 @@
-// Scheduled weekly leaderboard post.
-//
-// node-cron fires just after each ISO week rolls over (Monday 00:05 UTC) and posts the
-// board for the week that just ended to leaderboardChannelId. Nothing is wiped: the new
-// week starts empty automatically because every query filters by isoWeek.
-
 import cron from 'node-cron';
+import { EmbedBuilder } from 'discord.js';
 import { getEffectiveConfig } from './config.js';
 import { getDb } from '../firebase.js';
 import { previousIsoWeek } from '../lib/week.js';
@@ -13,7 +8,6 @@ function pointsRef() {
   return getDb().collection('points');
 }
 
-// Build the board for a specific ISO week string.
 async function boardForWeek(week, limit = 10) {
   const snap = await pointsRef().where('isoWeek', '==', week).get();
   const counts = new Map();
@@ -31,6 +25,12 @@ async function boardForWeek(week, limit = 10) {
     }))
     .sort((a, b) => b.points - a.points)
     .slice(0, limit);
+}
+
+function pixelBar(points, max) {
+  const len = 10;
+  const filled = max > 0 ? Math.round((points / max) * len) : 0;
+  return '█'.repeat(Math.max(filled, 1)) + '░'.repeat(len - Math.max(filled, 1));
 }
 
 export async function postWeeklyLeaderboard(client) {
@@ -55,19 +55,27 @@ export async function postWeeklyLeaderboard(client) {
     return;
   }
 
+  const embed = new EmbedBuilder()
+    .setColor(0x39FF14)
+    .setFooter({ text: '▸ SHOWCASE BOT ◂' });
+
   if (board.length === 0) {
-    await channel.send(`<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**\n\nNo points were awarded this week.`);
+    embed.setDescription(
+      `<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**\n\n\`░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░\`\n No points were awarded this week.\n\`░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░\``,
+    );
+    await channel.send({ embeds: [embed] });
     return;
   }
 
+  const maxPoints = board[0].points;
   const lines = board.map((e, i) => {
-    const rank = `**${i + 1}.**`;
     const name = e.commenterTag || `<@${e.commenterId}>`;
-    const pts = e.points === 1 ? '1 point' : `${e.points} points`;
-    return `<:helpfulfeedback:1521124800204898386> ${rank} ${name} — ${pts}`;
+    const pts = e.points === 1 ? '1 pt' : `${e.points} pts`;
+    const bar = pixelBar(e.points, maxPoints);
+    return `<:helpfulfeedback:1521124800204898386> **${i + 1}.** ${name} — **${pts}**\n\`${bar}\``;
   });
 
-  await channel.send(
+  embed.setDescription(
     [
       `<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**`,
       'Thanks to everyone who left helpful feedback! A fresh week starts now.',
@@ -75,12 +83,12 @@ export async function postWeeklyLeaderboard(client) {
       ...lines,
     ].join('\n'),
   );
+
+  await channel.send({ embeds: [embed] });
   console.log(`[weeklyPost] posted leaderboard for ${week}`);
 }
 
-// Schedule the weekly post. Returns the cron task so callers can stop it if needed.
 export function scheduleWeeklyPost(client) {
-  // Monday 00:05 UTC — just after the ISO week boundary (weeks start Monday).
   const task = cron.schedule(
     '5 0 * * 1',
     () => {
