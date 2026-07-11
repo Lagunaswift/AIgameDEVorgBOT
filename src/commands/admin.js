@@ -8,6 +8,7 @@ import { SlashCommandBuilder, ChannelType, PermissionFlagsBits } from 'discord.j
 import { isMod } from '../lib/permissions.js';
 import { adjustPoints } from '../services/scoring.js';
 import { registerForum } from '../services/config.js';
+import { getDb, serverTimestamp } from '../firebase.js';
 
 // ---- /points adjust <user> <amount> <reason> -------------------------------------
 
@@ -121,4 +122,89 @@ const registerForumCommand = {
   },
 };
 
-export const commands = [pointsCommand, registerForumCommand];
+// ---- /seedusers -----------------------------------------------------------------
+
+const seedUsersCommand = {
+  data: new SlashCommandBuilder()
+    .setName('seedusers')
+    .setDescription('(Mod) Scan recent messages across the server to pre-populate known users.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  async execute(interaction) {
+    if (!isMod(interaction)) {
+      await interaction.reply({ content: 'This command is mods only.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const guild = interaction.guild;
+    const db = getDb();
+    const seenRef = db.collection('seenUsers');
+    const seen = new Set();
+
+    const channels = await guild.channels.fetch();
+    let scanned = 0;
+
+    for (const [, channel] of channels) {
+      if (!channel) continue;
+      if (!channel.isTextBased()) continue;
+      if (channel.isThread()) continue;
+
+      try {
+        const messages = await channel.messages.fetch({ limit: 100 });
+        for (const msg of messages.values()) {
+          if (msg.author.bot) continue;
+          if (seen.has(msg.author.id)) continue;
+          seen.add(msg.author.id);
+        }
+        scanned += 1;
+      } catch {
+        // No access to this channel; skip.
+      }
+    }
+
+    // Also scan threads in forum channels
+    for (const [, channel] of channels) {
+      if (!channel) continue;
+      if (channel.type !== ChannelType.GuildForum) continue;
+
+      try {
+        const active = await channel.threads.fetchActive();
+        for (const [, thread] of active.threads) {
+          try {
+            const messages = await thread.messages.fetch({ limit: 100 });
+            for (const msg of messages.values()) {
+              if (msg.author.bot) continue;
+              if (seen.has(msg.author.id)) continue;
+              seen.add(msg.author.id);
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+
+    // Batch write to Firestore (max 500 per batch)
+    const userIds = [...seen];
+    let count = 0;
+    for (let i = 0; i < userIds.length; i += 400) {
+      const chunk = userIds.slice(i, i + 400);
+      const batch = db.batch();
+      for (const userId of chunk) {
+        batch.set(
+          seenRef.doc(userId),
+          { userId, seenAt: serverTimestamp(), source: 'seed' },
+          { merge: true },
+        );
+      }
+      await batch.commit();
+      count += chunk.length;
+    }
+
+    await interaction.editReply(
+      `✅ Seeded **${count}** users from **${scanned}** channels. Only genuinely new posters will trigger notifications now.`,
+    );
+  },
+};
+
+export const commands = [pointsCommand, registerForumCommand, seedUsersCommand];
