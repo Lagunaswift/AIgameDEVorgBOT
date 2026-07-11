@@ -12,6 +12,7 @@ import * as threadCreate from './events/threadCreate.js';
 import * as messageReactionAdd from './events/messageReactionAdd.js';
 import * as messageReactionRemove from './events/messageReactionRemove.js';
 import * as interactionCreate from './events/interactionCreate.js';
+import * as messageCreate from './events/messageCreate.js';
 
 const EVENT_MODULES = [
   ready,
@@ -19,6 +20,7 @@ const EVENT_MODULES = [
   messageReactionAdd,
   messageReactionRemove,
   interactionCreate,
+  messageCreate,
 ];
 
 async function main() {
