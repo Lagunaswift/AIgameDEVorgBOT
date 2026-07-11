@@ -44,6 +44,7 @@ export const config = {
   modRoleId: process.env.MOD_ROLE_ID || null,
 
   rewardThresholds: parseJson(process.env.REWARD_THRESHOLDS, []),
+  excludedTagNames: parseIdList(process.env.EXCLUDED_TAG_NAMES || 'Just Sharing'),
 
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',
 };
