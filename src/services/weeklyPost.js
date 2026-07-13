@@ -48,12 +48,6 @@ async function boardForWeek(week, limit = 10) {
     .slice(0, limit);
 }
 
-function pixelBar(points, max) {
-  const len = 10;
-  const filled = max > 0 ? Math.round((points / max) * len) : 0;
-  return '█'.repeat(Math.max(filled, 1)) + '░'.repeat(len - Math.max(filled, 1));
-}
-
 function renderEmbed(week, board) {
   const embed = new EmbedBuilder()
     .setColor(0x39FF14)
@@ -61,20 +55,15 @@ function renderEmbed(week, board) {
 
   if (board.length === 0) {
     embed.setDescription(
-      `<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**\n\n` +
-      '`░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░`\n' +
-      ' No points were awarded this week.\n' +
-      '`░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░`',
+      `<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**\n\nNo points were awarded this week.`,
     );
     return embed;
   }
 
-  const maxPoints = board[0].points;
   const lines = board.map((e, i) => {
     const name = e.commenterTag || `<@${e.commenterId}>`;
     const pts = e.points === 1 ? '1 pt' : `${e.points} pts`;
-    const bar = pixelBar(e.points, maxPoints);
-    return `<:helpfulfeedback:1521124800204898386> **${i + 1}.** ${name} — **${pts}**\n\`${bar}\``;
+    return `<:helpfulfeedback:1521124800204898386> **${i + 1}.** ${name} — **${pts}**`;
   });
 
   embed.setDescription(

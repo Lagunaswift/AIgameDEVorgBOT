@@ -15,12 +15,6 @@ export const data = new SlashCommandBuilder()
       ),
   );
 
-function pixelBar(points, max) {
-  const len = 10;
-  const filled = max > 0 ? Math.round((points / max) * len) : 0;
-  return '█'.repeat(Math.max(filled, 1)) + '░'.repeat(len - Math.max(filled, 1));
-}
-
 export async function execute(interaction) {
   const scope = interaction.options.getString('scope') || 'week';
   await interaction.deferReply({ ephemeral: true });
@@ -36,18 +30,16 @@ export async function execute(interaction) {
 
   if (board.length === 0) {
     embed.setDescription(
-      `<:ShowcaseBotReact:1521124760220729445> **${title}**\n\n\`░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░\`\n No points yet — go leave some feedback!\n\`░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░\``,
+      `<:ShowcaseBotReact:1521124760220729445> **${title}**\n\nNo points yet — go leave some feedback!`,
     );
     await interaction.editReply({ embeds: [embed] });
     return;
   }
 
-  const maxPoints = board[0].points;
   const lines = board.map((entry, i) => {
     const name = entry.commenterTag || `<@${entry.commenterId}>`;
     const pts = entry.points === 1 ? '1 pt' : `${entry.points} pts`;
-    const bar = pixelBar(entry.points, maxPoints);
-    return `<:helpfulfeedback:1521124800204898386> **${i + 1}.** ${name} — **${pts}**\n\`${bar}\``;
+    return `<:helpfulfeedback:1521124800204898386> **${i + 1}.** ${name} — **${pts}**`;
   });
 
   embed.setDescription(
