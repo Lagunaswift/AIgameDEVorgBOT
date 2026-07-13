@@ -26,7 +26,7 @@ export async function execute(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor(0x39FF14)
-    .setFooter({ text: '▸ SHOWCASE BOT ◂' });
+;
 
   if (board.length === 0) {
     embed.setDescription(

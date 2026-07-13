@@ -51,7 +51,7 @@ async function boardForWeek(week, limit = 10) {
 function renderEmbed(week, board) {
   const embed = new EmbedBuilder()
     .setColor(0x39FF14)
-    .setFooter({ text: '▸ SHOWCASE BOT ◂' });
+;
 
   if (board.length === 0) {
     embed.setDescription(

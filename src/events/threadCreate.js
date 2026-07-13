@@ -43,7 +43,8 @@ async function notifyModFeed(thread, data, mode) {
         `by <@${data.ownerId}> in <#${thread.parentId}>\n\n` +
         `<#${thread.id}>`,
       )
-      .setFooter({ text: '▸ SHOWCASE BOT ◂' })
+
+
       .setTimestamp();
 
     await feedChannel.send({ embeds: [embed] });

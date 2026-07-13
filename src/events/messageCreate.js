@@ -47,7 +47,8 @@ export async function execute(message) {
         `**Where:** <#${message.channelId}>\n` +
         `**Said:** ${preview}`,
       )
-      .setFooter({ text: '▸ SHOWCASE BOT ◂' })
+
+
       .setTimestamp();
 
     await feedChannel.send({ embeds: [embed] });
