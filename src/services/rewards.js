@@ -1,20 +1,11 @@
-// Optional reward roles. When a user's total points cross a configured threshold, the
-// bot assigns the matching role. Requires Manage Roles and the bot's role dragged above
-// any role it hands out. Safe to leave unconfigured (rewardThresholds defaults to []).
-
+import { EmbedBuilder } from 'discord.js';
 import { getDb } from '../firebase.js';
+import { getEffectiveConfig } from './config.js';
 
 function pointsRef() {
   return getDb().collection('points');
 }
 
-// Re-check thresholds for a user after a point award and assign any roles they now
-// qualify for. Best-effort: logs and continues on permission errors rather than throwing
-// into the scoring hot path.
-//
-//   guild:   the discord.js Guild.
-//   userId:  the user whose total to check.
-//   cfg:     effective config (rewardThresholds: [{ points, roleId }]).
 export async function applyRewardRoles({ guild, userId, cfg }) {
   const thresholds = cfg.rewardThresholds || [];
   if (thresholds.length === 0) return;
@@ -32,14 +23,14 @@ export async function applyRewardRoles({ guild, userId, cfg }) {
   try {
     member = await guild.members.fetch(userId);
   } catch {
-    // User may have left the server; nothing to do.
     return;
   }
 
-  for (const { points, roleId } of thresholds) {
+  for (const { points, roleId, label } of thresholds) {
     if (total < points) continue;
     if (!roleId) continue;
     if (member.roles.cache.has(roleId)) continue;
+
     try {
       await member.roles.add(roleId, `Reached ${points} feedback points`);
       console.log(`[rewards] gave role ${roleId} to ${userId} (total ${total})`);
@@ -49,5 +40,33 @@ export async function applyRewardRoles({ guild, userId, cfg }) {
         err.message,
       );
     }
+
+    await notifyMilestone({ guild, member, points, total, label });
+  }
+}
+
+async function notifyMilestone({ guild, member, points, total, label }) {
+  try {
+    const cfg = await getEffectiveConfig();
+    if (!cfg.modFeedChannelId) return;
+
+    const channel = await guild.client.channels.fetch(cfg.modFeedChannelId);
+    if (!channel || !channel.isTextBased()) return;
+
+    const milestone = label || `${points} points`;
+
+    const embed = new EmbedBuilder()
+      .setColor(0xFFD700)
+      .setDescription(
+        `<:ShowcaseBotReact:1521124760220729445> **Milestone Reached**\n\n` +
+        `<@${member.id}> (${member.user.tag}) hit **${milestone}**!\n` +
+        `Total points: **${total}**\n\n` +
+        `_Action needed — check if they qualify for a reward._`,
+      )
+      .setTimestamp();
+
+    await channel.send({ embeds: [embed] });
+  } catch (err) {
+    console.error('[rewards] milestone notification failed:', err.message);
   }
 }
