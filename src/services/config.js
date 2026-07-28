@@ -33,6 +33,7 @@ function merge(docData) {
     modFeedChannelId: d.modFeedChannelId ?? envConfig.modFeedChannelId,
     excludedTagNames: d.excludedTagNames ?? envConfig.excludedTagNames,
     rewardThresholds: d.rewardThresholds ?? envConfig.rewardThresholds,
+    milestoneThresholds: d.milestoneThresholds ?? envConfig.milestoneThresholds,
   };
 }
 

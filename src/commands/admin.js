@@ -6,11 +6,12 @@
 
 import { SlashCommandBuilder, ChannelType, PermissionFlagsBits } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
-import { adjustPoints } from '../services/scoring.js';
-import { registerForum } from '../services/config.js';
+import { adjustPoints, resetPoints } from '../services/scoring.js';
+import { registerForum, getEffectiveConfig } from '../services/config.js';
+import { checkMilestones, clearMilestones } from '../services/milestones.js';
 import { getDb, serverTimestamp } from '../firebase.js';
 
-// ---- /points adjust <user> <amount> <reason> -------------------------------------
+// ---- /points adjust | /points reset ----------------------------------------------
 
 const pointsCommand = {
   data: new SlashCommandBuilder()
@@ -33,6 +34,17 @@ const pointsCommand = {
         .addStringOption((o) =>
           o.setName('reason').setDescription('Reason for the adjustment').setRequired(true),
         ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName('reset')
+        .setDescription("Wipe a user's points to zero and clear their milestone markers.")
+        .addUserOption((o) =>
+          o.setName('user').setDescription('User to reset').setRequired(true),
+        )
+        .addStringOption((o) =>
+          o.setName('reason').setDescription('Reason for the reset').setRequired(true),
+        ),
     ),
 
   async execute(interaction) {
@@ -40,7 +52,12 @@ const pointsCommand = {
       await interaction.reply({ content: 'This command is mods only.', ephemeral: true });
       return;
     }
+
     const sub = interaction.options.getSubcommand();
+    if (sub === 'reset') {
+      await executeReset(interaction);
+      return;
+    }
     if (sub !== 'adjust') {
       await interaction.reply({ content: 'Unknown subcommand.', ephemeral: true });
       return;
@@ -66,12 +83,62 @@ const pointsCommand = {
       modTag: interaction.user.tag,
     });
 
+    // A manual bump can cross a threshold just as a reaction can, and this path used to
+    // skip the check entirely — someone moved 8 -> 15 by hand would never alert.
+    let milestone = null;
+    if (amount > 0 && interaction.guild) {
+      const cfg = await getEffectiveConfig();
+      milestone = await checkMilestones({
+        guild: interaction.guild,
+        userId: user.id,
+        userTag: user.tag,
+        cfg,
+      });
+    }
+
     const verb = amount > 0 ? 'added' : 'removed';
     await interaction.editReply(
-      `✅ ${verb} ${Math.abs(res.applied)} point(s) for ${user.tag}.\nReason: ${reason}\nAudit id: \`${res.auditId}\``,
+      `✅ ${verb} ${Math.abs(res.applied)} point(s) for ${user.tag}.\nReason: ${reason}\nAudit id: \`${res.auditId}\`` +
+        (milestone ? `\n🏆 Crossed **${milestone.announced} points** — alert posted to the mod feed.` : ''),
     );
   },
 };
+
+// Zero a user's points and clear their milestone markers together.
+//
+// Both halves matter: points alone would leave markers behind, and the next time that
+// user crossed a threshold the alert would silently no-op — a reset that looks like it
+// worked but quietly breaks the thing it was meant to let you re-test.
+async function executeReset(interaction) {
+  const user = interaction.options.getUser('user');
+  const reason = interaction.options.getString('reason');
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const res = await resetPoints({
+    targetUserId: user.id,
+    targetTag: user.tag,
+    reason,
+    modId: interaction.user.id,
+    modTag: interaction.user.tag,
+  });
+
+  const markers = await clearMilestones(user.id);
+
+  if (res.removed === 0 && markers === 0) {
+    await interaction.editReply(`${user.tag} already had no points or milestone markers.`);
+    return;
+  }
+
+  await interaction.editReply(
+    [
+      `✅ Reset **${user.tag}** to zero.`,
+      `Points removed: **${res.removed}** · Milestone markers cleared: **${markers}**`,
+      `Reason: ${reason}`,
+      `Audit id: \`${res.auditId}\``,
+    ].join('\n'),
+  );
+}
 
 // ---- /registerforum <channel> <mode> ---------------------------------------------
 

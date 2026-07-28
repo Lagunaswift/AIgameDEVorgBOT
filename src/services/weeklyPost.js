@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { EmbedBuilder } from 'discord.js';
 import { getEffectiveConfig } from './config.js';
+import { tally, rollNames } from './leaderboard.js';
 import { getDb, serverTimestamp } from '../firebase.js';
 import { previousIsoWeek } from '../lib/week.js';
 
@@ -29,53 +30,54 @@ async function markWeekPosted(week, trigger) {
   );
 }
 
-async function boardForWeek(week, limit = 10) {
+// Everyone who earned at least one point in the week. No limit: this is a thank-you
+// roll, so truncating it would silently drop people who did the work.
+async function boardForWeek(week) {
   const snap = await pointsRef().where('isoWeek', '==', week).get();
-  const counts = new Map();
-  const tags = new Map();
-  for (const doc of snap.docs) {
-    const d = doc.data();
-    counts.set(d.commenterId, (counts.get(d.commenterId) || 0) + 1);
-    if (d.commenterTag) tags.set(d.commenterId, d.commenterTag);
+  return tally(snap.docs.map((d) => d.data()));
+}
+
+// The public weekly post: names only, alphabetical, set as a run rather than a column.
+//
+// Deliberately carries no scores or positions. A vertical scored column reads as a
+// ladder whether or not it is numbered, and on a quiet week that makes the board look
+// like a contest nobody entered. Mods still see the real figures privately via
+// /leaderboard; the ranking moved rather than disappearing.
+export function describeRoll(week, board) {
+  const header = `<:ShowcaseBotReact:1521124760220729445> **Thanks for the feedback — ${week}**`;
+
+  if (board.length === 0) {
+    return `${header}\n\nNo feedback was scored this week.`;
   }
-  return [...counts.entries()]
-    .map(([commenterId, points]) => ({
-      commenterId,
-      commenterTag: tags.get(commenterId) || null,
-      points,
-    }))
-    .sort((a, b) => b.points - a.points)
-    .slice(0, limit);
+
+  const all = rollNames(board).map((n) => `**${n}**`);
+
+  // Discord rejects embed descriptions over 4096 characters. The roll is deliberately
+  // unlimited, so trim only if a week is genuinely huge — and say how many were cut
+  // rather than letting names vanish silently.
+  const BUDGET = 3600;
+  const names = [];
+  let used = 0;
+  for (const n of all) {
+    if (used + n.length + 3 > BUDGET) break;
+    names.push(n);
+    used += n.length + 3;
+  }
+  const dropped = all.length - names.length;
+
+  return [
+    header,
+    "These folks left helpful feedback on someone's project this week.",
+    '',
+    `<:helpfulfeedback:1521124800204898386> ${names.join(' · ')}` +
+      (dropped > 0 ? ` _and ${dropped} more_` : ''),
+  ].join('\n');
 }
 
 function renderEmbed(week, board) {
-  const embed = new EmbedBuilder()
+  return new EmbedBuilder()
     .setColor(0x39FF14)
-;
-
-  if (board.length === 0) {
-    embed.setDescription(
-      `<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**\n\nNo points were awarded this week.`,
-    );
-    return embed;
-  }
-
-  const lines = board.map((e, i) => {
-    const name = e.commenterTag || `<@${e.commenterId}>`;
-    const pts = e.points === 1 ? '1 pt' : `${e.points} pts`;
-    return `<:helpfulfeedback:1521124800204898386> **${i + 1}.** ${name} — **${pts}**`;
-  });
-
-  embed.setDescription(
-    [
-      `<:ShowcaseBotReact:1521124760220729445> **Feedback Leaderboard — ${week}**`,
-      'Thanks to everyone who left helpful feedback! A fresh week starts now.',
-      '',
-      ...lines,
-    ].join('\n'),
-  );
-
-  return embed;
+    .setDescription(describeRoll(week, board));
 }
 
 export async function postLeaderboardForWeek(client, week) {

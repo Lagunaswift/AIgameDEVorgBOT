@@ -44,6 +44,11 @@ export const config = {
   modRoleId: process.env.MOD_ROLE_ID || null,
 
   rewardThresholds: parseJson(process.env.REWARD_THRESHOLDS, []),
+
+  // All-time point totals that alert the mod feed. Notification only — no role is
+  // assigned; rewards are handed out by hand after a mod reaches out.
+  milestoneThresholds: parseIdList(process.env.MILESTONE_THRESHOLDS || '10,20,40').map(Number),
+
   excludedTagNames: parseIdList(process.env.EXCLUDED_TAG_NAMES || 'just-sharing'),
 
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',

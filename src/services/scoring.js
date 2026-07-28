@@ -165,6 +165,43 @@ export async function adjustPoints({ targetUserId, targetTag, amount, reason, mo
   return { applied, requested: amount, auditId: auditRef.id };
 }
 
+// Delete every point doc for a user, returning them to zero. Writes an audit record like
+// adjustPoints does, so a reset is as traceable as a manual adjustment.
+//
+// Milestone markers are NOT touched here — services/milestones.js owns that collection.
+// The caller clears both so neither module reaches into the other's data.
+//
+// Returns { removed, auditId }.
+export async function resetPoints({ targetUserId, targetTag, reason, modId, modTag }) {
+  const db = getDb();
+
+  const snap = await pointsRef().where('commenterId', '==', targetUserId).get();
+  const removed = snap.size;
+
+  // Firestore caps a batch at 500 writes; chunk so a heavy account can't fail the reset.
+  for (let i = 0; i < snap.docs.length; i += 400) {
+    const batch = db.batch();
+    for (const doc of snap.docs.slice(i, i + 400)) batch.delete(doc.ref);
+    await batch.commit();
+  }
+
+  const auditRef = db.collection('adjustments').doc();
+  await auditRef.set({
+    targetUserId,
+    targetTag,
+    kind: 'reset',
+    requested: -removed,
+    applied: -removed,
+    reason,
+    modId,
+    modTag,
+    isoWeek: isoWeek(),
+    createdAt: serverTimestamp(),
+  });
+
+  return { removed, auditId: auditRef.id };
+}
+
 // Revoke a point (reaction removed by the thread owner). Only deletes if the doc exists
 // and the remover is the thread owner. Returns true if a point was revoked.
 export async function revokePoint({ thread, removerId, commentMessageId }) {

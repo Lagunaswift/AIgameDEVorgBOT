@@ -11,6 +11,7 @@ import { getEffectiveConfig } from '../services/config.js';
 import { getThread } from '../services/threads.js';
 import { tryAwardPoint, AwardResult } from '../services/scoring.js';
 import { applyRewardRoles } from '../services/rewards.js';
+import { checkMilestones } from '../services/milestones.js';
 
 export const name = Events.MessageReactionAdd;
 export const once = false;
@@ -71,6 +72,13 @@ async function handleShowcase({ reaction, user, thread, cfg }) {
       await applyRewardRoles({
         guild: reaction.message.guild,
         userId: point.commenterId,
+        cfg,
+      });
+      // Mod-feed alert on a crossed threshold. Independent of the roles above.
+      await checkMilestones({
+        guild: reaction.message.guild,
+        userId: point.commenterId,
+        userTag: point.commenterTag,
         cfg,
       });
     }
