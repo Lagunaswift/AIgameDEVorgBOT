@@ -9,7 +9,6 @@
 
 import { EmbedBuilder } from 'discord.js';
 import { getDb, serverTimestamp } from '../firebase.js';
-import { getEffectiveConfig } from './config.js';
 
 function pointsRef() {
   return getDb().collection('points');
@@ -64,16 +63,20 @@ async function claimMilestone(userId, threshold, total) {
   }
 }
 
-async function notify({ guild, userId, userTag, threshold, total }) {
-  const cfg = await getEffectiveConfig();
-  if (!cfg.modFeedChannelId) {
-    console.warn('[milestones] no modFeedChannelId configured; alert not sent');
+async function notify({ guild, userId, userTag, threshold, total, cfg }) {
+  // Own channel when configured, mod feed otherwise. A milestone is an action item for a
+  // human, so it shouldn't have to compete with the new-post and new-poster stream.
+  const channelId = cfg.milestoneChannelId || cfg.modFeedChannelId;
+  if (!channelId) {
+    console.warn(
+      '[milestones] neither MILESTONE_CHANNEL_ID nor MOD_FEED_CHANNEL_ID is set; alert not sent',
+    );
     return false;
   }
 
-  const channel = await guild.client.channels.fetch(cfg.modFeedChannelId);
+  const channel = await guild.client.channels.fetch(channelId);
   if (!channel || !channel.isTextBased()) {
-    console.error(`[milestones] mod feed ${cfg.modFeedChannelId} is not text-based`);
+    console.error(`[milestones] channel ${channelId} is not text-based`);
     return false;
   }
 
@@ -146,7 +149,7 @@ export async function checkMilestones({ guild, userId, userTag, cfg }) {
   if (announce === null) return null;
 
   try {
-    await notify({ guild, userId, userTag, threshold: announce, total });
+    await notify({ guild, userId, userTag, threshold: announce, total, cfg });
     console.log(`[milestones] ${userTag || userId} crossed ${announce} (total ${total})`);
   } catch (err) {
     console.error('[milestones] alert failed to send:', err.message);

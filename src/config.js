@@ -41,6 +41,9 @@ export const config = {
 
   leaderboardChannelId: process.env.LEADERBOARD_CHANNEL_ID || null,
   modFeedChannelId: process.env.MOD_FEED_CHANNEL_ID || null,
+  // Milestone alerts get their own channel. Falls back to the mod feed when unset, so
+  // new-thread and new-poster notices don't have to share with reward actions.
+  milestoneChannelId: process.env.MILESTONE_CHANNEL_ID || null,
   modRoleId: process.env.MOD_ROLE_ID || null,
 
   rewardThresholds: parseJson(process.env.REWARD_THRESHOLDS, []),
