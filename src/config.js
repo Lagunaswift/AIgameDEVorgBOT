@@ -55,6 +55,11 @@ export const config = {
   excludedTagNames: parseIdList(process.env.EXCLUDED_TAG_NAMES || 'just-sharing'),
 
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',
+
+  // Logo-design competition tallying (/logovotes). The default channel and vote emoji so the
+  // command can be run bare; both are overridable per-invocation via command options.
+  logoCompetitionChannelId: process.env.LOGO_COMPETITION_CHANNEL_ID || null,
+  logoVoteEmoji: process.env.LOGO_VOTE_EMOJI || 'logocomp',
 };
 
 // Validate the essentials at boot so we fail loud rather than silently mis-scoring later.
