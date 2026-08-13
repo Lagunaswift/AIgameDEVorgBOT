@@ -56,10 +56,13 @@ export const config = {
 
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',
 
-  // Logo-design competition tallying (/logovotes). The default channel and vote emoji so the
-  // command can be run bare; both are overridable per-invocation via command options.
+  // Logo-design competition tallying (/logovotes, /logopoll). Defaults so the commands can be
+  // run bare; both are overridable per-invocation via command options. The vote-emoji default
+  // is the :logocomp: custom emoji *id* — matching on id (not name) means renaming the emoji
+  // in the server never breaks the tally. A name ("logocomp"), a full "<:logocomp:id>", or a
+  // unicode emoji also work when passed via env or the command option.
   logoCompetitionChannelId: process.env.LOGO_COMPETITION_CHANNEL_ID || null,
-  logoVoteEmoji: process.env.LOGO_VOTE_EMOJI || 'logocomp',
+  logoVoteEmoji: process.env.LOGO_VOTE_EMOJI || '1537600958245249154',
 };
 
 // Validate the essentials at boot so we fail loud rather than silently mis-scoring later.

@@ -68,7 +68,7 @@ export async function execute(interaction) {
 
   const channelOpt = interaction.options.getChannel('channel');
   const channelId = channelOpt?.id || config.logoCompetitionChannelId;
-  const emojiRaw = interaction.options.getString('emoji') || config.logoVoteEmoji || 'logocomp';
+  const emojiRaw = interaction.options.getString('emoji') || config.logoVoteEmoji;
   const voterScope = interaction.options.getString('voters') || VoterScope.EXCLUDE_SELF;
   const top = interaction.options.getInteger('top') || 10;
 

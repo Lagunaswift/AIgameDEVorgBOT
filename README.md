@@ -110,7 +110,7 @@ that was.
 | `/points adjust <user> <amount> <reason>` | mod | Manual point override; writes an audit doc. |
 | `/registerforum <channel> <mode>` | mod | Add a forum to the watched list with a mode. |
 | `/postleaderboard [week]` | mod | Post the weekly leaderboard to the leaderboard channel now. `week` = `previous` (default, matches the automated post) or `current`. Useful for verifying channel permissions and recovering a missed week. |
-| `/logovotes [channel] [emoji] [voters] [top]` | mod | Tally a logo (or any) competition by reaction and show the ranked entries. Defaults: the configured channel, the `logocomp` emoji, and votes from everyone **except each entry's own owner**. See the logo-competition section for the alt-gaming caveat. |
+| `/logovotes [channel] [emoji] [voters] [top]` | mod | Tally a logo (or any) competition by reaction and show the ranked entries. Defaults: the configured channel, the `:logocomp:` emoji (matched by id), and votes from everyone **except each entry's own owner**. See the logo-competition section for the alt-gaming caveat. |
 | `/logopoll [channel] [post_to] [finalists] [hours] [question] [emoji] [voters]` | mod | Shortlist the top entries by reaction, then post a **native Discord poll** (single-select, one vote per account) of the finalists to decide the winner. Poll caps at 10 options; ties squeezed out are reported. |
 
 Mod-only commands are gated by **Manage Server** or the configured `MOD_ROLE_ID`, checked
@@ -163,7 +163,7 @@ LEADERBOARD_CHANNEL_ID=
 MOD_ROLE_ID=                  # optional
 WEEKLY_POST_ENABLED=true      # optional
 LOGO_COMPETITION_CHANNEL_ID=  # optional — default channel for /logovotes
-LOGO_VOTE_EMOJI=logocomp      # optional — default vote emoji for /logovotes
+LOGO_VOTE_EMOJI=1537600958245249154  # optional — :logocomp: custom emoji id (matched by id)
 ```
 
 The helpful emoji is read from config, so swapping `✅` for a custom server emoji later is
@@ -204,7 +204,7 @@ entry threads and confirms reactions are being read (logged, not scored).
 > entries close — one vote per person, enforced by Discord.
 
 If a reaction tally is wanted anyway (for display), **`/logovotes`** does exactly that:
-it counts the vote emoji (`logocomp` by default) across the competition channel and ranks
+it counts the vote emoji (the `:logocomp:` custom emoji by default, matched by id) across the competition channel and ranks
 the entries. It reads two layouts automatically —
 
 - **Forum / Media channel**: each post is a thread and one entry; the vote reaction sits on

@@ -89,7 +89,7 @@ export async function execute(interaction) {
   const finalists = interaction.options.getInteger('finalists') || POLL_MAX_ANSWERS;
   const hours = clampPollHours(interaction.options.getInteger('hours') ?? 24);
   const question = interaction.options.getString('question') || 'Which logo should win?';
-  const emojiRaw = interaction.options.getString('emoji') || config.logoVoteEmoji || 'logocomp';
+  const emojiRaw = interaction.options.getString('emoji') || config.logoVoteEmoji;
   const voterScope = interaction.options.getString('voters') || VoterScope.EXCLUDE_SELF;
 
   if (!channelId) {
