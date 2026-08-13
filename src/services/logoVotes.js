@@ -265,3 +265,65 @@ export async function tallyLogoVotes({ channel, emojiSpec, voterScope = VoterSco
     },
   };
 }
+
+// --- native poll building ---------------------------------------------------------
+//
+// A Discord poll caps at 10 answers, so a big field is narrowed to finalists by the reaction
+// tally first, then a native poll (one vote per account, Discord-enforced) decides the
+// winner. buildFinalistPoll turns ranked entries into the poll answers plus a numbered
+// legend that maps each option back to its entry — the logos themselves can't live inside a
+// poll, so voters follow the legend links to the gallery.
+
+export const POLL_MAX_ANSWERS = 10;
+export const POLL_ANSWER_TEXT_MAX = 55; // Discord's per-answer text limit.
+export const POLL_QUESTION_MAX = 300; // Discord's question text limit.
+export const POLL_MIN_HOURS = 1;
+export const POLL_MAX_HOURS = 768; // 32 days — Discord's ceiling.
+
+// Keycap number emojis 1–10, used both as poll-answer emojis and in the legend so a voter
+// can match an option to its entry at a glance.
+export const NUMBER_EMOJI = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+
+// Truncate on code points (not UTF-16 units) so a multi-byte character is never cut in half.
+function truncate(str, max) {
+  const chars = Array.from(str ?? '');
+  if (chars.length <= max) return chars.join('');
+  return `${chars.slice(0, max - 1).join('')}…`;
+}
+
+// Build native-poll answers + a numbered legend from ranked entries (tallyLogoVotes output).
+// Only entries with at least one counted vote are eligible finalists; the top `finalists`
+// (capped at 10) are chosen. Returns the pieces the command needs plus `droppedTie` — how
+// many entries tied with the last finalist got squeezed out by the 10-answer cap.
+export function buildFinalistPoll({ entries, finalists = POLL_MAX_ANSWERS, question }) {
+  const cap = Math.max(1, Math.min(finalists || POLL_MAX_ANSWERS, POLL_MAX_ANSWERS));
+  const eligible = entries.filter((e) => e.votes > 0);
+  const chosen = eligible.slice(0, cap);
+
+  const cutoffVotes = chosen.length ? chosen[chosen.length - 1].votes : 0;
+  const droppedTie = eligible.slice(chosen.length).filter((e) => e.votes === cutoffVotes).length;
+
+  const answers = chosen.map((entry, i) => ({
+    text: truncate(entry.title || `Entry ${i + 1}`, POLL_ANSWER_TEXT_MAX),
+    emoji: NUMBER_EMOJI[i],
+  }));
+
+  const legend = chosen.map((entry, i) => {
+    const owner = entry.ownerId ? ` — by <@${entry.ownerId}>` : '';
+    return `${NUMBER_EMOJI[i]} ${entry.link}${owner}`;
+  });
+
+  return {
+    answers,
+    legend,
+    chosen,
+    droppedTie,
+    question: truncate(question || 'Which logo should win?', POLL_QUESTION_MAX),
+  };
+}
+
+// Clamp a requested poll duration (hours) into Discord's allowed range.
+export function clampPollHours(hours) {
+  const n = Number.isFinite(hours) ? Math.round(hours) : 24;
+  return Math.max(POLL_MIN_HOURS, Math.min(n, POLL_MAX_HOURS));
+}
