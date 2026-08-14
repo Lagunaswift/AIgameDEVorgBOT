@@ -110,6 +110,8 @@ that was.
 | `/points adjust <user> <amount> <reason>` | mod | Manual point override; writes an audit doc. |
 | `/registerforum <channel> <mode>` | mod | Add a forum to the watched list with a mode. |
 | `/postleaderboard [week]` | mod | Post the weekly leaderboard to the leaderboard channel now. `week` = `previous` (default, matches the automated post) or `current`. Useful for verifying channel permissions and recovering a missed week. |
+| `/logovotes [channel] [emoji] [voters] [top]` | mod | Tally a logo (or any) competition by reaction and show the ranked entries. Defaults: the configured channel, the `:logocomp:` emoji (matched by id), and votes from everyone **except each entry's own owner**. See the logo-competition section for the alt-gaming caveat. |
+| `/logopoll [channel] [post_to] [finalists] [hours] [question] [emoji] [voters]` | mod | Shortlist the top entries by reaction, then post a **native Discord poll** (single-select, one vote per account) of the finalists to decide the winner. Poll caps at 10 options; ties squeezed out are reported. |
 
 Mod-only commands are gated by **Manage Server** or the configured `MOD_ROLE_ID`, checked
 in the handler.
@@ -160,6 +162,8 @@ MAX_POINTS_PER_THREAD_PER_USER=2
 LEADERBOARD_CHANNEL_ID=
 MOD_ROLE_ID=                  # optional
 WEEKLY_POST_ENABLED=true      # optional
+LOGO_COMPETITION_CHANNEL_ID=  # optional — default channel for /logovotes
+LOGO_VOTE_EMOJI=1537600958245249154  # optional — :logocomp: custom emoji id (matched by id)
 ```
 
 The helpful emoji is read from config, so swapping `✅` for a custom server emoji later is
@@ -199,9 +203,41 @@ entry threads and confirms reactions are being read (logged, not scored).
 > alt accounts. The real vote is a **native Discord Poll** posted in a voting channel once
 > entries close — one vote per person, enforced by Discord.
 
-If a reaction tally is wanted anyway (for display), count the configured emoji from anyone
-except the entry owner, per thread — but this is gameable with alts and the **Poll is
-preferred**.
+If a reaction tally is wanted anyway (for display), **`/logovotes`** does exactly that:
+it counts the vote emoji (the `:logocomp:` custom emoji by default, matched by id) across the competition channel and ranks
+the entries. It reads two layouts automatically —
+
+- **Forum / Media channel**: each post is a thread and one entry; the vote reaction sits on
+  the thread's starter message and the entry owner is the thread owner.
+- **Text / Announcement channel**: each message carrying the vote emoji is an entry, owned
+  by its author (older messages beyond a 1000-message scan are reported as skipped).
+
+By default it counts votes from everyone **except each entry's own owner** (no self-votes).
+The `voters` option switches this to *only non-contestants* (exclude everyone who submitted
+an entry) or *everyone*. The reply is ephemeral, ranks ties as ties, and notes how many
+owner self-votes were dropped. This is still **gameable with alt accounts** — treat it as a
+quick read of who's ahead, and shortlist finalists with it, not as the final word.
+
+### The poll: `/logopoll`
+
+To decide the winner cleanly, **`/logopoll`** shortlists the top entries by that same
+reaction tally and posts a **native Discord poll** of the finalists — single-select, so each
+account gets **one** vote (Discord-enforced), with a set closing time (`hours`, 1–768).
+
+A poll caps at **10 options** and can't contain the images, so the command posts a numbered
+legend (`1️⃣ <#entry> — by @maker`) linking each option to its post, and the matching poll
+below it. Flow:
+
+1. Entries collected as posts.
+2. Reactions accumulate; `/logovotes` shows the running tally.
+3. `/logopoll` posts the finalist poll (top `finalists`, default 10) to `post_to` (defaults
+   to the current channel). Ties squeezed out by the 10-option cap are reported back.
+
+Honest caveat: a poll is **one-vote-per-account and single-select**, which stops one person
+boosting every entry — but an alt account can still vote, so it is *cleaner and enforced*,
+not truly alt-proof. Only gating who can vote (e.g. a required role) fully stops alts. Note
+Discord only lets the **poll's author** (the bot) end a bot-made poll early; otherwise it
+closes itself at the deadline.
 
 ### First live test
 
@@ -261,8 +297,10 @@ src/
     rescan.js               downtime backfill
     weeklyPost.js           scheduled weekly leaderboard post
     rewards.js              optional role thresholds
+    logoVotes.js            live reaction tally + finalist poll builder (/logovotes, /logopoll)
   commands/
     leaderboard.js  mystats.js  needsreviews.js  rescan.js  admin.js
+    postleaderboard.js  logovotes.js  logopoll.js
 ```
 
 ---
