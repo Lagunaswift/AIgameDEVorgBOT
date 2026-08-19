@@ -27,7 +27,9 @@ const MAX_PAGES_PER_CHANNEL = 12;
 const MAX_LINE_CHARS = 280;
 const MAX_TRANSCRIPT_CHARS = 48_000;
 export const MIN_MESSAGES_FOR_SUMMARY = 5;
-const MAX_SUMMARY_CHARS = 1100;
+// Backstop above the prompt's 900-char rule: busy days overshoot a little, and the scrub
+// cuts at a line boundary, so give the recap room to end cleanly instead of mid-thought.
+const MAX_SUMMARY_CHARS = 1300;
 
 // Read the window's human messages from the given channels, newest-first per channel,
 // and return them as chronological "[#channel] name: text" lines. cleanContent is used
@@ -124,9 +126,11 @@ const SYSTEM_PROMPT = [
   '  attribute words to people who did not say them.',
   '- Specific beats broad: name the actual topics, decisions, and running gags of the day.',
   '  At most one lore aside in the whole recap; the chat is the star, not you.',
-  '- 2 to 6 short lines, each on its own line, at most 900 characters in total. Plain text',
-  '  only: no headers, no bullet markers, no greeting, no sign-off — the digest template',
-  '  adds those.',
+  '- 2 to 6 short lines, each on its own line. HARD LIMIT: 900 characters in total —',
+  '  anything past it gets machine-truncated mid-sentence, which makes you look corrupted.',
+  '  On a busy day, cover fewer topics rather than writing longer lines. Plain text only:',
+  '  no headers, no bullet markers, no greeting, no sign-off — the digest template adds',
+  '  those.',
   '- Refer to people by the display names shown in the transcript. Never use Discord',
   '  mention syntax (<@123>, @everyone, @here). Refer to channels as #name.',
   '- If something in the chat is sensitive, personal, or heated, leave it out entirely',

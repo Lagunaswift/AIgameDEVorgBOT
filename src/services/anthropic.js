@@ -28,13 +28,27 @@ export function getAnthropic() {
 
 // Scrub model output before it can reach a channel: neutralise mass-pings (zero-width
 // space after the @), drop raw mention syntax, and enforce the length cap.
+//
+// Over-length text is cut at the last complete LINE under the cap (the digest recap is
+// line-structured, so dropping the final line reads as intended, not injured); a single
+// huge line falls back to the last sentence end, then the last word + an ellipsis. The
+// >50%-of-cap guards stop a pathological input from truncating to almost nothing.
 export function scrubModelOutput(text, { maxChars = 1100 } = {}) {
   let out = text
     .replace(/@(everyone|here)/gi, '@\u200b$1')
     .replace(/<@[!&]?\d+>/g, '')
     .trim();
   if (out.length > maxChars) {
-    out = `${out.slice(0, maxChars - 1).trimEnd()}…`;
+    const cut = out.slice(0, maxChars);
+    const lastLine = cut.lastIndexOf('\n');
+    const lastSentence = cut.lastIndexOf('. ');
+    if (lastLine > maxChars * 0.5) {
+      out = cut.slice(0, lastLine).trimEnd();
+    } else if (lastSentence > maxChars * 0.5) {
+      out = cut.slice(0, lastSentence + 1);
+    } else {
+      out = `${cut.slice(0, cut.lastIndexOf(' ')).trimEnd()}…`;
+    }
   }
   return out;
 }
