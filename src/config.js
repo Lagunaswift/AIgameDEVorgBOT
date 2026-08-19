@@ -56,6 +56,11 @@ export const config = {
 
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',
 
+  // Sync slash commands to the guild on boot, so deploying new commands needs no manual
+  // `npm run register`. Set to "false" to go back to manual-only registration.
+  autoRegisterCommands:
+    (process.env.AUTO_REGISTER_COMMANDS || 'true').toLowerCase() !== 'false',
+
   // Logo-design competition tallying (/logovotes, /logopoll). Defaults so the commands can be
   // run bare; both are overridable per-invocation via command options. The vote-emoji default
   // is the :logocomp: custom emoji *id* — matching on id (not name) means renaming the emoji
