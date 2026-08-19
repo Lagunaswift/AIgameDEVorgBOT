@@ -1,4 +1,4 @@
-// /dailydigest [action] [window] — (Mod) preview or post Floppy's daily digest on demand.
+// /dailydigest [action] [window] — (Mod) preview or post Byte's daily digest on demand.
 // Preview renders the message ephemerally: the template parts are exactly what the cron
 // would post (same seed); the chat recap is generated fresh per render, so its wording can
 // differ between preview and post. Post sends it to the digest channel now: with the
@@ -9,11 +9,11 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
 import { prepareDigest, runDailyDigest } from '../services/dailyDigest.js';
-import { chatSummaryConfigured } from '../services/chatSummary.js';
+import { anthropicConfigured } from '../services/anthropic.js';
 
 export const data = new SlashCommandBuilder()
   .setName('dailydigest')
-  .setDescription("(Mod) Preview or post Floppy's daily digest now.")
+  .setDescription("(Mod) Preview or post Byte's daily digest now.")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addStringOption((o) =>
     o
@@ -58,7 +58,7 @@ export async function execute(interaction) {
       ? `<#${prepared.cfg.dailyDigestChannelId}>`
       : '**no channel configured** (set `DAILY_DIGEST_CHANNEL_ID`)';
     const notes = [];
-    if (!chatSummaryConfigured()) {
+    if (!anthropicConfigured()) {
       notes.push('Chat recap is off (no `ANTHROPIC_API_KEY`), so this is the template-only version.');
     }
     if (prepared.quiet && prepared.cfg.dailyDigestSkipQuiet) {
@@ -84,7 +84,7 @@ export async function execute(interaction) {
   switch (res.status) {
     case 'posted':
       await interaction.editReply(
-        `✅ Posted the digest${live ? ' (live window)' : ` for **${res.dateStr}**`} via ${res.via === 'webhook' ? 'the Floppy webhook' : 'the bot (no Manage Webhooks — no floppy avatar)'}.`,
+        `✅ Posted the digest${live ? ' (live window)' : ` for **${res.dateStr}**`} via ${res.via === 'webhook' ? 'the Byte webhook' : 'the bot (no Manage Webhooks — no Byte avatar)'}.`,
       );
       break;
     case 'no-config':

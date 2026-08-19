@@ -64,16 +64,16 @@ export const config = {
   logoCompetitionChannelId: process.env.LOGO_COMPETITION_CHANNEL_ID || null,
   logoVoteEmoji: process.env.LOGO_VOTE_EMOJI || '1537600958245249154',
 
-  // Floppy's daily digest: a witty end-of-day activity summary posted to a general channel.
+  // Byte's daily digest: a witty end-of-day recap posted to a general channel.
   // Off until DAILY_DIGEST_CHANNEL_ID is set. The persona name/avatar are used on a webhook
-  // so the post appears as "Floppy" with a floppy-disk avatar; without Manage Webhooks the
+  // so the post appears as Byte with a floppy-disk avatar; without Manage Webhooks the
   // digest falls back to posting as the bot. Time is "HH:MM" UTC.
   dailyDigestChannelId: process.env.DAILY_DIGEST_CHANNEL_ID || null,
   dailyDigestEnabled: (process.env.DAILY_DIGEST_ENABLED || 'true').toLowerCase() !== 'false',
   dailyDigestTimeUtc: process.env.DAILY_DIGEST_TIME_UTC || '20:00',
   dailyDigestSkipQuiet:
     (process.env.DAILY_DIGEST_SKIP_QUIET || 'false').toLowerCase() === 'true',
-  dailyDigestName: process.env.DAILY_DIGEST_NAME || 'Floppy',
+  dailyDigestName: process.env.DAILY_DIGEST_NAME || 'Byte',
   dailyDigestAvatarUrl:
     process.env.DAILY_DIGEST_AVATAR_URL ||
     'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f4be.png',
@@ -85,6 +85,12 @@ export const config = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
   dailyDigestModel: process.env.DAILY_DIGEST_MODEL || 'claude-opus-5',
   dailyDigestChatChannelIds: parseIdList(process.env.DAILY_DIGEST_CHAT_CHANNEL_IDS),
+
+  // /gameidea throttles. The cooldown is per user (mods bypass); the daily cap bounds the
+  // server's total API spend (the no-key mad-lib fallback is uncapped — it costs nothing).
+  gameIdeaModel: process.env.GAME_IDEA_MODEL || 'claude-opus-5',
+  gameIdeaCooldownSeconds: intOr(process.env.GAME_IDEA_COOLDOWN_SECONDS, 300),
+  gameIdeaDailyCap: intOr(process.env.GAME_IDEA_DAILY_CAP, 30),
 };
 
 // Validate the essentials at boot so we fail loud rather than silently mis-scoring later.

@@ -43,6 +43,9 @@ function merge(docData) {
     dailyDigestModel: d.dailyDigestModel ?? envConfig.dailyDigestModel,
     dailyDigestChatChannelIds:
       d.dailyDigestChatChannelIds ?? envConfig.dailyDigestChatChannelIds,
+    gameIdeaModel: d.gameIdeaModel ?? envConfig.gameIdeaModel,
+    gameIdeaCooldownSeconds: d.gameIdeaCooldownSeconds ?? envConfig.gameIdeaCooldownSeconds,
+    gameIdeaDailyCap: d.gameIdeaDailyCap ?? envConfig.gameIdeaDailyCap,
   };
 }
 

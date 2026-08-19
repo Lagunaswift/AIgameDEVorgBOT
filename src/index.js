@@ -72,7 +72,7 @@ async function main() {
       console.log('[startup] weekly post disabled via WEEKLY_POST_ENABLED=false');
     }
 
-    // Same shape for Floppy's daily digest: schedule, then catch up a digest whose
+    // Same shape for Byte's daily digest: schedule, then catch up a digest whose
     // scheduled post was missed (restart across the posting time, or a permission error
     // that's since been fixed). The per-day marker keeps this to one post per day.
     if (config.dailyDigestEnabled) {

@@ -1,11 +1,12 @@
-// Floppy's daily digest: a short, dry recap of the day, posted to a general channel in
-// the voice of a sentient floppy disk (persona lines in lib/floppy.js). The lead section
+// Byte's daily digest: a short, dry recap of the day, posted to a general channel in
+// the voice of Byte — the sentient 3.5" floppy disk defined in lib/byte.js (per the Byte
+// character spec). The lead section
 // is a summary of the actual chat — what people talked about — written by Claude from the
 // day's messages (services/chatSummary.js); after it come template lines for the events
 // the bot tracks (new builds, points, milestones, first-time posters).
 //
 // The disguise is a webhook: a webhook message carries its own username and avatar, so the
-// digest shows up as "Floppy" with a floppy-disk avatar without touching the bot's real
+// digest shows up as Byte with a floppy-disk avatar without touching the bot's real
 // identity. Needs Manage Webhooks on the digest channel; without it the digest still posts,
 // just as the bot itself.
 //
@@ -33,8 +34,8 @@
 import cron from 'node-cron';
 import { getEffectiveConfig } from './config.js';
 import { tally } from './leaderboard.js';
+import { anthropicConfigured } from './anthropic.js';
 import {
-  chatSummaryConfigured,
   collectTranscript,
   summariseChat,
   MIN_MESSAGES_FOR_SUMMARY,
@@ -48,7 +49,7 @@ import {
   QUIET_DAYS,
   SIGNOFFS,
   MVP_EPITHETS,
-} from '../lib/floppy.js';
+} from '../lib/byte.js';
 
 function dailyPostsRef() {
   return getDb().collection('dailyPosts');
@@ -148,7 +149,7 @@ export function isQuietDay(stats) {
 // shouldn't see recapped. Returns null when the feature is off (no API key, no client,
 // no channels) or collection fails; a null chat never blocks the digest.
 async function gatherChat(client, cfg, window, dateStr) {
-  if (!client || !chatSummaryConfigured()) return null;
+  if (!client || !anthropicConfigured()) return null;
 
   const channelIds = (
     cfg.dailyDigestChatChannelIds?.length
@@ -273,8 +274,8 @@ function buildLines(stats, rng) {
 // differently; the per-day marker is what guarantees a day still posts only once.
 export function describeDigest({ dateStr, stats, chat = null, live = false }) {
   const rng = dayRng(dateStr);
-  const header = `💾 **FLOPPY.LOG — ${prettyDate(dateStr)}${live ? ' (so far)' : ''}**`;
-  const signoff = `-# Floppy 💾 · ${pick(rng, SIGNOFFS)}`;
+  const header = `💾 **BYTE.LOG — ${prettyDate(dateStr)}${live ? ' (so far)' : ''}**`;
+  const signoff = `-# Byte 💾 · ${pick(rng, SIGNOFFS)}`;
   const hasChat = Boolean(chat && chat.messageCount > 0);
 
   if (isQuietDay(stats) && !hasChat) {
@@ -329,7 +330,7 @@ async function getOrCreateHook(channel, cfg) {
 
 // Returns "webhook" or "bot" depending on which path delivered the message. Throws only
 // if both paths fail.
-async function sendAsFloppy(channel, content, cfg) {
+async function sendAsByte(channel, content, cfg) {
   const allowedMentions = { parse: [] };
 
   try {
@@ -345,7 +346,7 @@ async function sendAsFloppy(channel, content, cfg) {
     hookCache.delete(channel.id);
     console.warn(
       `[dailyDigest] webhook persona unavailable (${err.message}); posting as the bot. ` +
-        'Grant the bot Manage Webhooks on the digest channel for the floppy avatar.',
+        "Grant the bot Manage Webhooks on the digest channel for Byte's avatar.",
     );
   }
 
@@ -459,7 +460,7 @@ export async function runDailyDigest(
 
   let via;
   try {
-    via = await sendAsFloppy(channel, content, cfg);
+    via = await sendAsByte(channel, content, cfg);
   } catch (err) {
     console.error(
       `[dailyDigest] send to channel ${cfg.dailyDigestChannelId} failed: ${err.message}. ` +
