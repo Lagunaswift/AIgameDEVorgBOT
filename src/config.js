@@ -77,6 +77,14 @@ export const config = {
   dailyDigestAvatarUrl:
     process.env.DAILY_DIGEST_AVATAR_URL ||
     'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f4be.png',
+
+  // The chat-recap half of the digest (services/chatSummary.js). Off without an API key —
+  // the digest then posts its template-only version. Which channels get read defaults to
+  // the digest channel itself; DAILY_DIGEST_CHAT_CHANNEL_IDS widens that. The key is env
+  // only (it's a secret); model and channel list are also overridable via the config doc.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
+  dailyDigestModel: process.env.DAILY_DIGEST_MODEL || 'claude-opus-5',
+  dailyDigestChatChannelIds: parseIdList(process.env.DAILY_DIGEST_CHAT_CHANNEL_IDS),
 };
 
 // Validate the essentials at boot so we fail loud rather than silently mis-scoring later.

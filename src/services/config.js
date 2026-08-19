@@ -40,6 +40,9 @@ function merge(docData) {
     dailyDigestSkipQuiet: d.dailyDigestSkipQuiet ?? envConfig.dailyDigestSkipQuiet,
     dailyDigestName: d.dailyDigestName ?? envConfig.dailyDigestName,
     dailyDigestAvatarUrl: d.dailyDigestAvatarUrl ?? envConfig.dailyDigestAvatarUrl,
+    dailyDigestModel: d.dailyDigestModel ?? envConfig.dailyDigestModel,
+    dailyDigestChatChannelIds:
+      d.dailyDigestChatChannelIds ?? envConfig.dailyDigestChatChannelIds,
   };
 }
 

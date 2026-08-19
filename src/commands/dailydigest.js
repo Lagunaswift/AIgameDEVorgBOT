@@ -1,13 +1,15 @@
 // /dailydigest [action] [window] — (Mod) preview or post Floppy's daily digest on demand.
-// Preview renders the exact message ephemerally (same seed, so what you see is what the
-// cron would post). Post sends it to the digest channel now: with the default "latest"
-// window this is the recovery path for a failed scheduled post (it re-posts the completed
-// 24h window and marks the day); with "live" it posts what's happened since the last
-// digest as a bonus, without touching the daily cadence.
+// Preview renders the message ephemerally: the template parts are exactly what the cron
+// would post (same seed); the chat recap is generated fresh per render, so its wording can
+// differ between preview and post. Post sends it to the digest channel now: with the
+// default "latest" window this is the recovery path for a failed scheduled post (it
+// re-posts the completed 24h window and marks the day); with "live" it posts what's
+// happened since the last digest as a bonus, without touching the daily cadence.
 
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
 import { prepareDigest, runDailyDigest } from '../services/dailyDigest.js';
+import { chatSummaryConfigured } from '../services/chatSummary.js';
 
 export const data = new SlashCommandBuilder()
   .setName('dailydigest')
@@ -46,7 +48,7 @@ export async function execute(interaction) {
   if (action === 'preview') {
     let prepared;
     try {
-      prepared = await prepareDigest({ live });
+      prepared = await prepareDigest({ client: interaction.client, live });
     } catch (err) {
       await interaction.editReply(`⚠️ Could not gather the day: ${err.message}`);
       return;
@@ -55,9 +57,14 @@ export async function execute(interaction) {
     const where = prepared.cfg.dailyDigestChannelId
       ? `<#${prepared.cfg.dailyDigestChannelId}>`
       : '**no channel configured** (set `DAILY_DIGEST_CHANNEL_ID`)';
-    const note = prepared.quiet && prepared.cfg.dailyDigestSkipQuiet
-      ? ' Quiet day + skip-quiet is on, so the cron would post nothing.'
-      : '';
+    const notes = [];
+    if (!chatSummaryConfigured()) {
+      notes.push('Chat recap is off (no `ANTHROPIC_API_KEY`), so this is the template-only version.');
+    }
+    if (prepared.quiet && prepared.cfg.dailyDigestSkipQuiet) {
+      notes.push('Quiet day + skip-quiet is on, so the cron would post nothing.');
+    }
+    const note = notes.length ? ` ${notes.join(' ')}` : '';
 
     await interaction.editReply({
       content: `Would post to ${where}.${note}\n\n${prepared.content}`,

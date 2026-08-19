@@ -1,16 +1,19 @@
-// Floppy's daily digest: a short, dry summary of the day's server activity, posted to a
-// general channel in the voice of a sentient floppy disk (persona lines in lib/floppy.js).
+// Floppy's daily digest: a short, dry recap of the day, posted to a general channel in
+// the voice of a sentient floppy disk (persona lines in lib/floppy.js). The lead section
+// is a summary of the actual chat — what people talked about — written by Claude from the
+// day's messages (services/chatSummary.js); after it come template lines for the events
+// the bot tracks (new builds, points, milestones, first-time posters).
 //
 // The disguise is a webhook: a webhook message carries its own username and avatar, so the
 // digest shows up as "Floppy" with a floppy-disk avatar without touching the bot's real
 // identity. Needs Manage Webhooks on the digest channel; without it the digest still posts,
 // just as the bot itself.
 //
-// Everything reported is already in Firestore — threads registered (createdAt), points
-// awarded (awardedAt), first-time posters (seenAt), milestones crossed (crossedAt) — so
-// this is four range queries and a template, no new event tracking. Each query ranges over
-// a single field with no extra equality filters, deliberately: that shape needs no
-// composite Firestore index, so the feature deploys without console work.
+// The event lines come from what is already in Firestore — threads registered (createdAt),
+// points awarded (awardedAt), first-time posters (seenAt), milestones crossed (crossedAt) —
+// four range queries and a template. Each query ranges over a single field with no extra
+// equality filters, deliberately: that shape needs no composite Firestore index, so the
+// feature deploys without console work.
 //
 // A digest day is anchored to the posting time, not midnight: digest date D covers
 // [D-1 @ postTime, D @ postTime) UTC. Consecutive digests tile exactly — no event can fall
@@ -19,14 +22,23 @@
 // never went out (restart across the boundary, or a since-fixed permission error) and
 // never double-posts one that did.
 //
-// Prompt-injection note, since this is an AI server: the digest body contains no
-// user-authored text at all. Threads and users appear as <#id>/<@id> mentions, which
-// Discord renders client-side; titles and names never enter the template. Mentions are
-// sent with allowedMentions: parse [] so nobody gets pinged by their own shout-out.
+// Prompt-injection note, since this is an AI server: the template lines carry no
+// user-authored text — threads and users appear as <#id>/<@id> mentions, which Discord
+// renders client-side. The chat recap is the one model-written part; its defences
+// (untrusted-transcript prompt, delimiter stripping, output scrubbing, bounded spend)
+// live in services/chatSummary.js. Everything is sent with allowedMentions: parse [] so
+// nothing in the digest can ping anyone. When no ANTHROPIC_API_KEY is set, the chat
+// section is simply absent and the digest is the template-only version.
 
 import cron from 'node-cron';
 import { getEffectiveConfig } from './config.js';
 import { tally } from './leaderboard.js';
+import {
+  chatSummaryConfigured,
+  collectTranscript,
+  summariseChat,
+  MIN_MESSAGES_FOR_SUMMARY,
+} from './chatSummary.js';
 import { getDb, serverTimestamp } from '../firebase.js';
 import {
   dayRng,
@@ -130,6 +142,38 @@ export function isQuietDay(stats) {
   );
 }
 
+// Gather the chat half: read the day's messages and summarise them. Which channels get
+// read defaults to the digest channel itself (summarise #general, post in #general);
+// DAILY_DIGEST_CHAT_CHANNEL_IDS widens that — never add channels the whole server
+// shouldn't see recapped. Returns null when the feature is off (no API key, no client,
+// no channels) or collection fails; a null chat never blocks the digest.
+async function gatherChat(client, cfg, window, dateStr) {
+  if (!client || !chatSummaryConfigured()) return null;
+
+  const channelIds = (
+    cfg.dailyDigestChatChannelIds?.length
+      ? cfg.dailyDigestChatChannelIds
+      : [cfg.dailyDigestChannelId]
+  ).filter(Boolean);
+  if (channelIds.length === 0) return null;
+
+  try {
+    const collected = await collectTranscript(client, channelIds, window);
+    let summary = null;
+    if (collected.messageCount >= MIN_MESSAGES_FOR_SUMMARY) {
+      summary = await summariseChat({
+        transcript: collected.transcript,
+        dateStr,
+        model: cfg.dailyDigestModel,
+      });
+    }
+    return { ...collected, summary };
+  } catch (err) {
+    console.error('[dailyDigest] chat collection failed:', err.message);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
@@ -162,6 +206,25 @@ function mvpLine(stats, rng) {
     return `Top helpers, tied at ${top.points}: <@${tied[0].commenterId}> and <@${tied[1].commenterId}>. They can share the sector.`;
   }
   return `${tied.length} people tied at ${top.points} for top helper. Suspiciously wholesome.`;
+}
+
+// The chat section leads the digest — it is the part people asked for. Three shapes:
+// a Claude-written recap under a count header, a "too few to bother" line, or a fallback
+// when messages existed but summarisation failed (the digest never waits on a retry).
+function chatLines(chat) {
+  if (!chat || chat.messageCount === 0) return [];
+  const n = chat.messageCount;
+
+  if (chat.summary) {
+    const where = chat.channelsRead > 1 ? ` across ${chat.channelsRead} channels` : '';
+    return [`💬 **The chat, condensed** (${n} ${plural(n, 'message')}${where}):`, chat.summary];
+  }
+  if (n < MIN_MESSAGES_FOR_SUMMARY) {
+    return [`💬 A quiet **${n} ${plural(n, 'message')}** in chat. Barely worth a sector.`];
+  }
+  return [
+    `💬 **${n} messages** in chat today, but my summary sector corrupted. Scroll up, it's good exercise.`,
+  ];
 }
 
 function buildLines(stats, rng) {
@@ -204,14 +267,17 @@ function buildLines(stats, rng) {
   return lines;
 }
 
-// Pure renderer: same date + same stats always produce the same message (the rng is
-// seeded by the date), so previews, retries and catch-ups all agree.
-export function describeDigest({ dateStr, stats, live = false }) {
+// Renderer. The template parts (header, opener, event lines, signoff) are deterministic
+// for a given date — the rng is seeded by it — so template-only re-renders are identical.
+// The chat recap is a live model output, so a re-post after a failure may word it
+// differently; the per-day marker is what guarantees a day still posts only once.
+export function describeDigest({ dateStr, stats, chat = null, live = false }) {
   const rng = dayRng(dateStr);
   const header = `💾 **FLOPPY.LOG — ${prettyDate(dateStr)}${live ? ' (so far)' : ''}**`;
   const signoff = `-# Floppy 💾 · ${pick(rng, SIGNOFFS)}`;
+  const hasChat = Boolean(chat && chat.messageCount > 0);
 
-  if (isQuietDay(stats)) {
+  if (isQuietDay(stats) && !hasChat) {
     return [header, '', pick(rng, QUIET_DAYS), '', signoff].join('\n');
   }
 
@@ -219,7 +285,10 @@ export function describeDigest({ dateStr, stats, live = false }) {
   const parts = [header, '', opener, ''];
   let used = parts.join('\n').length + signoff.length + 2;
 
-  for (const line of buildLines(stats, rng)) {
+  // Chat first, then event lines; the budget loop drops whatever no longer fits, which
+  // by construction is only ever trailing event lines (the recap itself is capped well
+  // inside the budget).
+  for (const line of [...chatLines(chat), ...buildLines(stats, rng)]) {
     if (used + line.length + 1 > CONTENT_BUDGET) break;
     parts.push(line);
     used += line.length + 1;
@@ -307,7 +376,14 @@ async function markDayPosted(dateStr, trigger, quiet) {
 
 // Gather + render for a digest without sending it — the /dailydigest preview path.
 // live=true covers [last scheduled digest, now) instead of a completed 24h window.
-export async function prepareDigest({ live = false, dateStr = null, now = new Date(), cfg = null } = {}) {
+// `client` is needed to read chat; without it the digest renders template-only.
+export async function prepareDigest({
+  client = null,
+  live = false,
+  dateStr = null,
+  now = new Date(),
+  cfg = null,
+} = {}) {
   const effective = cfg || (await getEffectiveConfig({ force: true }));
   const time = parsePostTime(effective.dailyDigestTimeUtc);
 
@@ -315,12 +391,16 @@ export async function prepareDigest({ live = false, dateStr = null, now = new Da
   const window = live
     ? { start: scheduledEndFor(latestDigestDate(time, now), time), end: now }
     : windowFor(targetDate, time);
-
-  const stats = await gatherDayStats(window);
   const renderDate = live ? dateStrOf(now) : targetDate;
-  const content = describeDigest({ dateStr: renderDate, stats, live });
 
-  return { cfg: effective, dateStr: targetDate, window, stats, quiet: isQuietDay(stats), content };
+  const [stats, chat] = await Promise.all([
+    gatherDayStats(window),
+    gatherChat(client, effective, window, renderDate),
+  ]);
+  const quiet = isQuietDay(stats) && !(chat && chat.messageCount > 0);
+  const content = describeDigest({ dateStr: renderDate, stats, chat, live });
+
+  return { cfg: effective, dateStr: targetDate, window, stats, chat, quiet, content };
 }
 
 export async function runDailyDigest(
@@ -346,7 +426,7 @@ export async function runDailyDigest(
 
   let prepared;
   try {
-    prepared = await prepareDigest({ live, dateStr: day, cfg });
+    prepared = await prepareDigest({ client, live, dateStr: day, cfg });
   } catch (err) {
     console.error('[dailyDigest] gathering the day failed:', err.message);
     return { status: 'gather-failed', dateStr: day, error: err.message };
