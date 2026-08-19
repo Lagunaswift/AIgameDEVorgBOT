@@ -5,6 +5,7 @@ import { config, assertConfig } from './config.js';
 import { initFirebase } from './firebase.js';
 import { loadCommands } from './loadCommands.js';
 import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js';
+import { scheduleDailyDigest, catchUpDailyDigest } from './services/dailyDigest.js';
 
 // Event modules, imported once and bound at startup.
 import * as ready from './events/ready.js';
@@ -69,6 +70,20 @@ async function main() {
       );
     } else {
       console.log('[startup] weekly post disabled via WEEKLY_POST_ENABLED=false');
+    }
+
+    // Same shape for Floppy's daily digest: schedule, then catch up a digest whose
+    // scheduled post was missed (restart across the posting time, or a permission error
+    // that's since been fixed). The per-day marker keeps this to one post per day.
+    if (config.dailyDigestEnabled) {
+      scheduleDailyDigest(client).catch((err) =>
+        console.error('[dailyDigest] scheduling failed:', err.message),
+      );
+      catchUpDailyDigest(client).catch((err) =>
+        console.error('[dailyDigest] catch-up failed:', err.message),
+      );
+    } else {
+      console.log('[startup] daily digest disabled via DAILY_DIGEST_ENABLED=false');
     }
   });
 

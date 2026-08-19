@@ -63,6 +63,20 @@ export const config = {
   // unicode emoji also work when passed via env or the command option.
   logoCompetitionChannelId: process.env.LOGO_COMPETITION_CHANNEL_ID || null,
   logoVoteEmoji: process.env.LOGO_VOTE_EMOJI || '1537600958245249154',
+
+  // Floppy's daily digest: a witty end-of-day activity summary posted to a general channel.
+  // Off until DAILY_DIGEST_CHANNEL_ID is set. The persona name/avatar are used on a webhook
+  // so the post appears as "Floppy" with a floppy-disk avatar; without Manage Webhooks the
+  // digest falls back to posting as the bot. Time is "HH:MM" UTC.
+  dailyDigestChannelId: process.env.DAILY_DIGEST_CHANNEL_ID || null,
+  dailyDigestEnabled: (process.env.DAILY_DIGEST_ENABLED || 'true').toLowerCase() !== 'false',
+  dailyDigestTimeUtc: process.env.DAILY_DIGEST_TIME_UTC || '20:00',
+  dailyDigestSkipQuiet:
+    (process.env.DAILY_DIGEST_SKIP_QUIET || 'false').toLowerCase() === 'true',
+  dailyDigestName: process.env.DAILY_DIGEST_NAME || 'Floppy',
+  dailyDigestAvatarUrl:
+    process.env.DAILY_DIGEST_AVATAR_URL ||
+    'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f4be.png',
 };
 
 // Validate the essentials at boot so we fail loud rather than silently mis-scoring later.

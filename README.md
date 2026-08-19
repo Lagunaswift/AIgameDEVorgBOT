@@ -97,6 +97,10 @@ across the Monday boundary, a redeploy, or a since-fixed permission error is rec
 boot catch-up that re-posts any week never actually delivered, and never double-posts one
 that was.
 
+**`dailyPosts`** (doc id = UTC date string, e.g. `2026-08-19`) — the same marker pattern
+for Floppy's daily digest: written after a day's digest is delivered (or deliberately
+skipped as quiet), checked by the daily cron and the boot catch-up.
+
 ---
 
 ## Slash commands
@@ -112,6 +116,7 @@ that was.
 | `/postleaderboard [week]` | mod | Post the weekly leaderboard to the leaderboard channel now. `week` = `previous` (default, matches the automated post) or `current`. Useful for verifying channel permissions and recovering a missed week. |
 | `/logovotes [channel] [emoji] [voters] [top]` | mod | Tally a logo (or any) competition by reaction and show the ranked entries. Defaults: the configured channel, the `:logocomp:` emoji (matched by id), and votes from everyone **except each entry's own owner**. See the logo-competition section for the alt-gaming caveat. |
 | `/logopoll [channel] [post_to] [finalists] [hours] [question] [emoji] [voters]` | mod | Shortlist the top entries by reaction, then post a **native Discord poll** (single-select, one vote per account) of the finalists to decide the winner. Poll caps at 10 options; ties squeezed out are reported. |
+| `/dailydigest [action] [window]` | mod | Preview (ephemeral, default) or post Floppy's daily digest now. `window` = `latest` (the completed day, re-postable to recover a failed scheduled post) or `live` (everything since the last digest, as a bonus post). |
 
 Mod-only commands are gated by **Manage Server** or the configured `MOD_ROLE_ID`, checked
 in the handler.
@@ -137,7 +142,9 @@ a try/catch before doing anything.
 
 **Bot permissions**: View Channels, Read Message History, Send Messages, Send Messages in
 Threads, Add Reactions, and — if reward roles are enabled — **Manage Roles** with the
-bot's role dragged **above** any role it hands out.
+bot's role dragged **above** any role it hands out. For the daily digest's floppy-disk
+persona, **Manage Webhooks** on the digest channel (optional — without it the digest posts
+as the bot).
 
 **Leaderboard channel**: the bot must have **View Channel**, **Send Messages**, and **Use
 External Emojis** (the post uses custom emojis) on the channel set by `LEADERBOARD_CHANNEL_ID`.
@@ -164,6 +171,12 @@ MOD_ROLE_ID=                  # optional
 WEEKLY_POST_ENABLED=true      # optional
 LOGO_COMPETITION_CHANNEL_ID=  # optional — default channel for /logovotes
 LOGO_VOTE_EMOJI=1537600958245249154  # optional — :logocomp: custom emoji id (matched by id)
+DAILY_DIGEST_CHANNEL_ID=      # optional — enables Floppy's daily digest (point at #general)
+DAILY_DIGEST_ENABLED=true     # optional
+DAILY_DIGEST_TIME_UTC=20:00   # optional — daily posting time, HH:MM UTC
+DAILY_DIGEST_SKIP_QUIET=false # optional — true = stay silent on zero-activity days
+DAILY_DIGEST_NAME=Floppy      # optional — webhook persona name
+DAILY_DIGEST_AVATAR_URL=      # optional — webhook persona avatar (defaults to a 💾 image)
 ```
 
 The helpful emoji is read from config, so swapping `✅` for a custom server emoji later is
@@ -247,6 +260,40 @@ live. Decide the logo winner with a Poll, then finish phases 4+ for showcase mod
 
 ---
 
+## Floppy's daily digest (optional)
+
+A short end-of-day summary of server activity, posted to a general channel in the voice of
+**Floppy** — a sentient 3.5" disk with a dry sense of humour and its own floppy-disk avatar.
+Off until `DAILY_DIGEST_CHANNEL_ID` is set.
+
+A digest covers the 24 hours ending at `DAILY_DIGEST_TIME_UTC` (default 20:00 UTC), so
+consecutive digests tile exactly — nothing falls between two windows or shows up twice.
+(The cron is read at boot, so changing the time via the config doc takes effect on the
+next restart.) It
+reports what the bot already records, so there is no new tracking: new showcase builds
+(linked), competition entries, feedback points awarded plus the day's top helper, milestone
+crossings, and first-time posters. On a day with nothing to report Floppy posts a deadpan
+one-liner instead ("Nothing happened today. I checked both sides.") — set
+`DAILY_DIGEST_SKIP_QUIET=true` for silence instead.
+
+How the pieces work:
+
+- **The avatar is a webhook.** A webhook message carries its own username and avatar, so
+  the digest appears as "Floppy" 💾 without touching the bot's identity. This needs
+  **Manage Webhooks** on the digest channel; without it the digest still posts, just as
+  the bot. Name and avatar are configurable (`DAILY_DIGEST_NAME`, `DAILY_DIGEST_AVATAR_URL`).
+- **The wit is curated, not generated.** Lines live in `src/lib/floppy.js` and rotate on a
+  seed derived from the date, so re-renders of the same day are identical (a retried post
+  can't come out reworded) and no AI call sits in the loop. The digest body contains **no
+  user-authored text** — threads and users appear as `<#id>`/`<@id>` mentions that Discord
+  renders itself — so on a server full of people who *will* try to prompt-inject a bot,
+  there is nothing to inject into. Mentions are sent no-ping.
+- **Idempotent like the weekly post.** A `dailyPosts` marker per day plus a boot catch-up
+  recovers a digest missed to a restart or a since-fixed permission error, and never
+  double-posts. `/dailydigest` previews the exact message ephemerally or posts on demand.
+
+---
+
 ## Reward roles (optional)
 
 When a user's total crosses a threshold in `config.rewardThresholds`, the bot assigns the
@@ -283,6 +330,7 @@ src/
     emoji.js                helpful-emoji matching (unicode vs custom id)
     partials.js             reaction/message partial resolution
     permissions.js          mod gating
+    floppy.js               daily-digest persona: line pools + seeded picker
   events/
     ready.js
     threadCreate.js         foundation: register threads
@@ -298,9 +346,10 @@ src/
     weeklyPost.js           scheduled weekly leaderboard post
     rewards.js              optional role thresholds
     logoVotes.js            live reaction tally + finalist poll builder (/logovotes, /logopoll)
+    dailyDigest.js          Floppy's daily digest: gather, render, webhook post, schedule
   commands/
     leaderboard.js  mystats.js  needsreviews.js  rescan.js  admin.js
-    postleaderboard.js  logovotes.js  logopoll.js
+    postleaderboard.js  logovotes.js  logopoll.js  dailydigest.js
 ```
 
 ---
