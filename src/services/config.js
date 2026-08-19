@@ -40,6 +40,7 @@ function merge(docData) {
     dailyDigestSkipQuiet: d.dailyDigestSkipQuiet ?? envConfig.dailyDigestSkipQuiet,
     dailyDigestName: d.dailyDigestName ?? envConfig.dailyDigestName,
     dailyDigestAvatarUrl: d.dailyDigestAvatarUrl ?? envConfig.dailyDigestAvatarUrl,
+    byteEmoji: d.byteEmoji ?? envConfig.byteEmoji,
     dailyDigestModel: d.dailyDigestModel ?? envConfig.dailyDigestModel,
     dailyDigestChatChannelIds:
       d.dailyDigestChatChannelIds ?? envConfig.dailyDigestChatChannelIds,

@@ -181,7 +181,8 @@ DAILY_DIGEST_ENABLED=true     # optional
 DAILY_DIGEST_TIME_UTC=20:00   # optional — daily posting time, HH:MM UTC
 DAILY_DIGEST_SKIP_QUIET=false # optional — true = stay silent on zero-activity days
 DAILY_DIGEST_NAME=Byte        # optional — webhook persona name
-DAILY_DIGEST_AVATAR_URL=      # optional — webhook persona avatar (defaults to a 💾 image)
+BYTE_EMOJI=                   # optional — Byte's server emoji (id or <:byte:id>); inline face + webhook avatar
+DAILY_DIGEST_AVATAR_URL=      # optional — explicit avatar override (else derived from BYTE_EMOJI)
 ANTHROPIC_API_KEY=            # optional — enables the digest's chat recap (off without it)
 DAILY_DIGEST_MODEL=claude-opus-5      # optional — claude-haiku-4-5 for ~5x cheaper recaps
 DAILY_DIGEST_CHAT_CHANNEL_IDS=        # optional — channels to recap; defaults to the digest channel
@@ -317,6 +318,14 @@ How the pieces work:
   the digest appears as "Byte" 💾 without touching the bot's identity. This needs
   **Manage Webhooks** on the digest channel; without it the digest still posts, just as
   the bot. Name and avatar are configurable (`DAILY_DIGEST_NAME`, `DAILY_DIGEST_AVATAR_URL`).
+- **Give Byte a face with one setting.** Upload the Byte artwork as a custom emoji on the
+  server and set `BYTE_EMOJI` to its id (rename-safe; `<a:byte:id>` for animated). That
+  one value puts the emoji inline everywhere Byte signs something — the digest header
+  (`<:byte:…> BYTE.LOG`), the signoff, the `/gameidea` footer — and uses the emoji's
+  Discord-CDN image as the webhook avatar automatically. Stickers are not an option for
+  this: Discord's API doesn't allow stickers on webhook posts or slash-command replies,
+  so a Byte sticker would appear as a plain bot message and break the persona. (Members
+  can still use the emoji and any Byte stickers themselves, of course.)
 - **Idempotent like the weekly post.** A `dailyPosts` marker per day plus a boot catch-up
   recovers a digest missed to a restart or a since-fixed permission error, and never
   double-posts. `/dailydigest` previews the message ephemerally or posts on demand (the

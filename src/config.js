@@ -74,9 +74,15 @@ export const config = {
   dailyDigestSkipQuiet:
     (process.env.DAILY_DIGEST_SKIP_QUIET || 'false').toLowerCase() === 'true',
   dailyDigestName: process.env.DAILY_DIGEST_NAME || 'Byte',
-  dailyDigestAvatarUrl:
-    process.env.DAILY_DIGEST_AVATAR_URL ||
-    'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f4be.png',
+  // Explicit avatar override. When unset, the digest derives the avatar from BYTE_EMOJI's
+  // CDN image, and falls back to a generic floppy image (see services/dailyDigest.js).
+  dailyDigestAvatarUrl: process.env.DAILY_DIGEST_AVATAR_URL || null,
+
+  // Byte's face: a custom server emoji (bare id, or full <:byte:id> / <a:byte:id>) or a
+  // unicode emoji. Used inline wherever Byte signs something (digest header + signoff,
+  // /gameidea footer) and — for a custom emoji — as the digest webhook's avatar image.
+  // Default 💾 until the server has real Byte art uploaded as an emoji.
+  byteEmoji: process.env.BYTE_EMOJI || null,
 
   // The chat-recap half of the digest (services/chatSummary.js). Off without an API key —
   // the digest then posts its template-only version. Which channels get read defaults to

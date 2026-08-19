@@ -5,6 +5,7 @@
 
 import { SlashCommandBuilder } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
+import { parseDisplayEmoji } from '../lib/emoji.js';
 import { getEffectiveConfig } from '../services/config.js';
 import { cooldownRemaining, noteUse, generateIdea } from '../services/gameIdeas.js';
 
@@ -52,10 +53,12 @@ export async function execute(interaction) {
     return;
   }
 
+  // Byte signs his work: the configured :byte: emoji (or 💾) leads the footer.
+  const byteTag = parseDisplayEmoji(cfg.byteEmoji).tag;
   const footer =
     res.status === 'madlib'
-      ? `-# seed: ${res.seedLabel} · raw ingredients — no API key configured`
-      : `-# seed: ${res.seedLabel} · idea #${res.number}`;
+      ? `-# ${byteTag} seed: ${res.seedLabel} · raw ingredients — no API key configured`
+      : `-# ${byteTag} seed: ${res.seedLabel} · idea #${res.number}`;
 
   await interaction.editReply({
     content: `${res.text}\n\n${footer}`,

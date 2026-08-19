@@ -41,6 +41,7 @@ import {
   MIN_MESSAGES_FOR_SUMMARY,
 } from './chatSummary.js';
 import { getDb, serverTimestamp } from '../firebase.js';
+import { parseDisplayEmoji } from '../lib/emoji.js';
 import {
   dayRng,
   pick,
@@ -272,10 +273,11 @@ function buildLines(stats, rng) {
 // for a given date — the rng is seeded by it — so template-only re-renders are identical.
 // The chat recap is a live model output, so a re-post after a failure may word it
 // differently; the per-day marker is what guarantees a day still posts only once.
-export function describeDigest({ dateStr, stats, chat = null, live = false }) {
+// byteTag is Byte's face (the configured :byte: emoji, or 💾) in the header and signature.
+export function describeDigest({ dateStr, stats, chat = null, live = false, byteTag = '💾' }) {
   const rng = dayRng(dateStr);
-  const header = `💾 **BYTE.LOG — ${prettyDate(dateStr)}${live ? ' (so far)' : ''}**`;
-  const signoff = `-# Byte 💾 · ${pick(rng, SIGNOFFS)}`;
+  const header = `${byteTag} **BYTE.LOG — ${prettyDate(dateStr)}${live ? ' (so far)' : ''}**`;
+  const signoff = `-# Byte ${byteTag} · ${pick(rng, SIGNOFFS)}`;
   const hasChat = Boolean(chat && chat.messageCount > 0);
 
   if (isQuietDay(stats) && !hasChat) {
@@ -302,6 +304,18 @@ export function describeDigest({ dateStr, stats, chat = null, live = false }) {
 // ---------------------------------------------------------------------------
 // Posting (webhook persona, with plain-bot fallback)
 // ---------------------------------------------------------------------------
+
+// Generic floppy image, used only when neither an explicit avatar url nor a custom Byte
+// emoji (whose Discord-CDN image doubles as the avatar) is configured.
+const DEFAULT_AVATAR_URL =
+  'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f4be.png';
+
+// Avatar precedence: explicit override → the configured Byte emoji's CDN image (upload
+// the Byte art as a server emoji and one BYTE_EMOJI value gives both the inline face and
+// the webhook avatar) → generic floppy.
+export function byteAvatarUrl(cfg) {
+  return cfg.dailyDigestAvatarUrl || parseDisplayEmoji(cfg.byteEmoji).imageUrl || DEFAULT_AVATAR_URL;
+}
 
 // Webhooks are cached per channel; a stale entry (webhook deleted by a mod) fails the
 // send, drops the cache and falls back to a plain message for that run.
@@ -338,7 +352,7 @@ async function sendAsByte(channel, content, cfg) {
     await hook.send({
       content,
       username: cfg.dailyDigestName,
-      avatarURL: cfg.dailyDigestAvatarUrl || undefined,
+      avatarURL: byteAvatarUrl(cfg),
       allowedMentions,
     });
     return 'webhook';
@@ -399,7 +413,8 @@ export async function prepareDigest({
     gatherChat(client, effective, window, renderDate),
   ]);
   const quiet = isQuietDay(stats) && !(chat && chat.messageCount > 0);
-  const content = describeDigest({ dateStr: renderDate, stats, chat, live });
+  const byteTag = parseDisplayEmoji(effective.byteEmoji).tag;
+  const content = describeDigest({ dateStr: renderDate, stats, chat, live, byteTag });
 
   return { cfg: effective, dateStr: targetDate, window, stats, chat, quiet, content };
 }
