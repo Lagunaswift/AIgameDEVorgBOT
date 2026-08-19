@@ -35,6 +35,18 @@ function merge(docData) {
     excludedTagNames: d.excludedTagNames ?? envConfig.excludedTagNames,
     rewardThresholds: d.rewardThresholds ?? envConfig.rewardThresholds,
     milestoneThresholds: d.milestoneThresholds ?? envConfig.milestoneThresholds,
+    dailyDigestChannelId: d.dailyDigestChannelId ?? envConfig.dailyDigestChannelId,
+    dailyDigestTimeUtc: d.dailyDigestTimeUtc ?? envConfig.dailyDigestTimeUtc,
+    dailyDigestSkipQuiet: d.dailyDigestSkipQuiet ?? envConfig.dailyDigestSkipQuiet,
+    dailyDigestName: d.dailyDigestName ?? envConfig.dailyDigestName,
+    dailyDigestAvatarUrl: d.dailyDigestAvatarUrl ?? envConfig.dailyDigestAvatarUrl,
+    byteEmoji: d.byteEmoji ?? envConfig.byteEmoji,
+    dailyDigestModel: d.dailyDigestModel ?? envConfig.dailyDigestModel,
+    dailyDigestChatChannelIds:
+      d.dailyDigestChatChannelIds ?? envConfig.dailyDigestChatChannelIds,
+    gameIdeaModel: d.gameIdeaModel ?? envConfig.gameIdeaModel,
+    gameIdeaCooldownSeconds: d.gameIdeaCooldownSeconds ?? envConfig.gameIdeaCooldownSeconds,
+    gameIdeaDailyCap: d.gameIdeaDailyCap ?? envConfig.gameIdeaDailyCap,
   };
 }
 
