@@ -2,12 +2,23 @@
 // idempotent, so this is safe to run on every boot — which is exactly what index.js does,
 // making a deploy alone enough for new slash commands to appear. The standalone
 // `npm run register` script uses the same call for manual runs.
+//
+// The install/usage scope is made explicit here: guild-installed, usable in every guild
+// channel (including threads). This only sets where a command *can* live — it does NOT
+// control per-channel visibility. If commands show in some channels but not others,
+// that's a Discord server setting (Integration command permissions or a channel
+// permission override), not this payload — see the README troubleshooting.
 
-import { REST, Routes } from 'discord.js';
+import { REST, Routes, InteractionContextType, ApplicationIntegrationType } from 'discord.js';
 import { config } from '../config.js';
 
 export async function registerGuildCommands(commands) {
-  const body = [...commands.values()].map((c) => c.data.toJSON());
+  const body = [...commands.values()].map((c) => {
+    c.data
+      .setContexts(InteractionContextType.Guild)
+      .setIntegrationTypes(ApplicationIntegrationType.GuildInstall);
+    return c.data.toJSON();
+  });
   const rest = new REST({ version: '10' }).setToken(config.discordToken);
   return rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body });
 }
