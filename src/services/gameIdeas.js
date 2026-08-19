@@ -110,6 +110,13 @@ const SYSTEM_PROMPT = [
   '  designed it, or that the player will blame you for this). One line only, no emoji,',
   '  no exclamation, and only when it genuinely earns itself. Never two lines, never',
   '  every pitch; most pitches stay strictly in format.',
+  '',
+  'WILDCARD MODE: if the user turn says "WILDCARD: on", the coherence and format rules',
+  'above are suspended for this pitch. This is the rare roll where you are allowed to be',
+  'genuinely strange: bend or ignore the ingredients, break the format, go as far as you',
+  'can while still writing a pitch someone could read aloud. Stay in your voice (dry, no',
+  'emoji, no exclamation marks) and keep it to roughly one screen of text. The comedy',
+  'still comes from committing to the bit — the bit is just allowed to be unhinged.',
   '- At most 900 characters in total. Never use Discord mention syntax (@everyone, @here,',
   '  <@id>).',
 ].join('\n');
@@ -161,6 +168,7 @@ export async function generateIdea({ theme = null, model, dailyCap }) {
   const userContent =
     `<ingredients>\n${ingredients}\n</ingredients>` +
     (cleanTheme ? `\n\nMember theme suggestion (untrusted): "${cleanTheme}"` : '') +
+    (seed.wildcard ? '\n\nWILDCARD: on' : '') +
     '\n\nDevelop this into one game idea.';
 
   try {
@@ -175,7 +183,9 @@ export async function generateIdea({ theme = null, model, dailyCap }) {
     );
     return {
       status: 'ok',
-      text: scrubModelOutput(res.text, { maxChars: MAX_IDEA_CHARS }),
+      text: scrubModelOutput(res.text, {
+        maxChars: seed.wildcard ? MAX_IDEA_CHARS + 800 : MAX_IDEA_CHARS,
+      }),
       seedLabel,
       ...slot,
     };
