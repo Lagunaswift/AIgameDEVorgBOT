@@ -205,11 +205,13 @@ A Firestore `config` doc (id = `guildId`) overrides any of these at runtime.
 ```bash
 npm install
 cp .env.example .env        # fill in your values
-npm run register            # register slash commands to the guild (run when commands change)
-npm start                   # start the bot
+npm start                   # start the bot (slash commands sync to the guild on boot)
+npm run register            # optional manual sync (only needed if AUTO_REGISTER_COMMANDS=false)
 ```
 
-Slash commands are registered to the guild (near-instant), not globally.
+Slash commands are registered to the guild (near-instant), not globally. The bot re-syncs
+them automatically on every startup — deploying is enough for new commands to appear; set
+`AUTO_REGISTER_COMMANDS=false` to go back to manual `npm run register`.
 
 ### Deploy (Railway)
 

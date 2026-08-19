@@ -4,6 +4,7 @@ import { Client, GatewayIntentBits, Partials, Collection, Events } from 'discord
 import { config, assertConfig } from './config.js';
 import { initFirebase } from './firebase.js';
 import { loadCommands } from './loadCommands.js';
+import { registerGuildCommands } from './lib/registerCommands.js';
 import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js';
 import { scheduleDailyDigest, catchUpDailyDigest } from './services/dailyDigest.js';
 
@@ -60,6 +61,20 @@ async function main() {
 
   // Schedule the weekly leaderboard post once we're ready (needs a live client).
   client.once(Events.ClientReady, () => {
+    // Sync slash commands to the guild on every boot (a full-replace PUT, idempotent and
+    // near-instant for guild commands), so a deploy alone makes new commands appear — no
+    // separate `npm run register` step to forget. Failure logs loudly but never takes the
+    // bot down; the manual script remains the fallback.
+    if (config.autoRegisterCommands) {
+      registerGuildCommands(commands)
+        .then((data) => console.log(`[startup] synced ${data.length} slash commands to the guild`))
+        .catch((err) =>
+          console.error(
+            `[startup] slash-command sync failed: ${err.message}. Run \`npm run register\` manually.`,
+          ),
+        );
+    }
+
     if (config.weeklyPostEnabled) {
       scheduleWeeklyPost(client);
       // Catch up on boot: if the previous week's post never went out (a restart across the
