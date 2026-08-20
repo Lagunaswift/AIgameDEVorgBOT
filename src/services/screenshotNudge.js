@@ -94,9 +94,9 @@ export async function sendScreenshotNudge(thread, ownerId, { allowArchived = fal
   }
 
   const message =
-    `Hey <@${ownerId}>, nice post! Add a screenshot or short GIF to your first message ` +
-    `and this game will show up on the AIGAMEDEV site showcase. Games with images can ` +
-    `get featured on the homepage.`;
+    `Hey <@${ownerId}>, nice post! Threads with an image get way more eyes and feedback. ` +
+    `Add a screenshot or a short gameplay GIF to your first message. Landscape shots work ` +
+    `best, and actual gameplay beats a logo or title screen every time.`;
 
   try {
     await thread.send({ content: message });
