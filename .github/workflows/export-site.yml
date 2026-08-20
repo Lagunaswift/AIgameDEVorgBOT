@@ -55,8 +55,10 @@ jobs:
       - name: Commit and push site data
         working-directory: site
         run: |
-          git config user.name "showcase-export"
-          git config user.email "actions@users.noreply.github.com"
+          # Author as the repo owner so Vercel (which requires commit authors to
+          # have a linked account) deploys the automated data commits.
+          git config user.name "Lagunaswift"
+          git config user.email "jamesswift1988@gmail.com"
           git add -A
           if git diff --cached --quiet; then
             echo "No data changes this run."
