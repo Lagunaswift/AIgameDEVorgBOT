@@ -836,7 +836,7 @@ function pickFrom(pool) {
 export function rollIngredients() {
   const wildcard = Math.random() < WILDCARD_CHANCE;
   const withSetting = Math.random() < 0.8;
-  const withTwist = Math.random() < 0.7 || !withSetting;
+  const withTwist = withSetting ? Math.random() < 0.4 : true;
   return {
     genre: pickFrom(GENRES),
     protagonist: pickFrom(PROTAGONISTS),
