@@ -349,13 +349,13 @@ async function sendAsByte(channel, content, cfg) {
 
   try {
     const hook = await getOrCreateHook(channel, cfg);
-    await hook.send({
+    const message = await hook.send({
       content,
       username: cfg.dailyDigestName,
       avatarURL: byteAvatarUrl(cfg),
       allowedMentions,
     });
-    return 'webhook';
+    return { via: 'webhook', message };
   } catch (err) {
     hookCache.delete(channel.id);
     console.warn(
@@ -364,8 +364,41 @@ async function sendAsByte(channel, content, cfg) {
     );
   }
 
-  await channel.send({ content, allowedMentions });
-  return 'bot';
+  const message = await channel.send({ content, allowedMentions });
+  return { via: 'bot', message };
+}
+
+// ---------------------------------------------------------------------------
+// Pin rotation — pin the new digest, unpin the previous one
+// ---------------------------------------------------------------------------
+
+function digestPinRef() {
+  return getDb().collection('digestPins').doc('latest');
+}
+
+async function rotatePin(channel, newMessage) {
+  try {
+    const snap = await digestPinRef().get();
+    if (snap.exists) {
+      const { messageId, channelId } = snap.data();
+      if (channelId === channel.id && messageId) {
+        try {
+          const oldMsg = await channel.messages.fetch(messageId);
+          if (oldMsg.pinned) await oldMsg.unpin();
+        } catch {
+          // old message deleted or inaccessible
+        }
+      }
+    }
+
+    await newMessage.pin();
+    await digestPinRef().set({ messageId: newMessage.id, channelId: channel.id });
+  } catch (err) {
+    console.warn(
+      `[dailyDigest] pin rotation failed (${err.message}). ` +
+        'Grant the bot Manage Messages to pin the digest.',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,9 +506,9 @@ export async function runDailyDigest(
     return { status: 'not-text', dateStr: day };
   }
 
-  let via;
+  let via, message;
   try {
-    via = await sendAsByte(channel, content, cfg);
+    ({ via, message } = await sendAsByte(channel, content, cfg));
   } catch (err) {
     console.error(
       `[dailyDigest] send to channel ${cfg.dailyDigestChannelId} failed: ${err.message}. ` +
@@ -484,7 +517,10 @@ export async function runDailyDigest(
     return { status: 'send-failed', dateStr: day, error: err.message };
   }
 
-  if (!live) await markDayPosted(day, trigger, quiet);
+  if (!live) {
+    await markDayPosted(day, trigger, quiet);
+    await rotatePin(channel, message);
+  }
   console.log(`[dailyDigest] posted digest for ${day} via ${via} (${trigger})`);
   return { status: 'posted', dateStr: day, via, quiet };
 }
