@@ -130,8 +130,11 @@ async function collectForumThreads(channel) {
 }
 
 // Build entry records from a forum/media channel: one per thread, vote on the starter msg.
-async function gatherThreadEntries(channel, emojiSpec) {
-  const threads = await collectForumThreads(channel);
+// `threadFilter` (optional) narrows which threads count as entries, e.g. only threads
+// carrying a specific jam tag.
+async function gatherThreadEntries(channel, emojiSpec, threadFilter) {
+  let threads = await collectForumThreads(channel);
+  if (typeof threadFilter === 'function') threads = threads.filter(threadFilter);
   const entries = [];
 
   for (const thread of threads) {
@@ -215,9 +218,9 @@ export function isThreadedChannel(channel) {
 //
 // Returns { entries, totals } where entries are sorted by counted votes (desc) and carry a
 // `rank` with ties shared (1, 2, 2, 4). `totals` summarises the run for the header line.
-export async function tallyLogoVotes({ channel, emojiSpec, voterScope = VoterScope.EXCLUDE_SELF }) {
+export async function tallyLogoVotes({ channel, emojiSpec, voterScope = VoterScope.EXCLUDE_SELF, threadFilter }) {
   const { entries, truncated } = isThreadedChannel(channel)
-    ? await gatherThreadEntries(channel, emojiSpec)
+    ? await gatherThreadEntries(channel, emojiSpec, threadFilter)
     : await gatherMessageEntries(channel, emojiSpec);
 
   // The set of everyone who submitted an entry — needed for the non-contestants rule.

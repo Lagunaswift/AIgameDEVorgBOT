@@ -69,6 +69,16 @@ export const config = {
   logoCompetitionChannelId: process.env.LOGO_COMPETITION_CHANNEL_ID || null,
   logoVoteEmoji: process.env.LOGO_VOTE_EMOJI || '1537600958245249154',
 
+  // Jam voting (/jamvotes). The vote emoji members react with on jam entries; falls back
+  // to the logo-competition emoji when unset, so the command works before a dedicated
+  // jam emoji exists. Same formats accepted as LOGO_VOTE_EMOJI.
+  jamVoteEmoji: process.env.JAM_VOTE_EMOJI || null,
+
+  // The dedicated jam-submissions forum (one thread per entry). /jamvotes defaults to it,
+  // and it should ALSO be listed in WATCHED_SHOWCASE_FORUM_IDS so entries get registered,
+  // scored, and exported like any other game post.
+  jamSubmissionsForumId: process.env.JAM_SUBMISSIONS_FORUM_ID || null,
+
   // Byte's daily digest: a witty end-of-day recap posted to a general channel.
   // Off until DAILY_DIGEST_CHANNEL_ID is set. The persona name/avatar are used on a webhook
   // so the post appears as Byte with a floppy-disk avatar; without Manage Webhooks the
@@ -102,6 +112,14 @@ export const config = {
   gameIdeaModel: process.env.GAME_IDEA_MODEL || 'claude-opus-5',
   gameIdeaCooldownSeconds: intOr(process.env.GAME_IDEA_COOLDOWN_SECONDS, 300),
   gameIdeaDailyCap: intOr(process.env.GAME_IDEA_DAILY_CAP, 30),
+
+  // Screenshot nudge: a one-time friendly reminder posted in new showcase threads that
+  // still have no image after a short grace period, pointing the poster at the site
+  // showcase. Set to "false" to disable the scheduled check entirely (the /nudgescreenshots
+  // mod command still works either way). Delay is in minutes.
+  screenshotNudgeEnabled:
+    (process.env.SCREENSHOT_NUDGE_ENABLED || 'true').toLowerCase() !== 'false',
+  screenshotNudgeDelayMinutes: intOr(process.env.SCREENSHOT_NUDGE_DELAY_MINUTES, 10),
 };
 
 // Validate the essentials at boot so we fail loud rather than silently mis-scoring later.

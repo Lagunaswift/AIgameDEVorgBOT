@@ -1,6 +1,8 @@
 import { Events, EmbedBuilder } from 'discord.js';
+import { config } from '../config.js';
 import { modeForForum, getEffectiveConfig } from '../services/config.js';
 import { registerThread } from '../services/threads.js';
+import { scheduleNudgeCheck } from '../services/screenshotNudge.js';
 
 export const name = Events.ThreadCreate;
 export const once = false;
@@ -20,6 +22,10 @@ export async function execute(thread, newlyCreated) {
 
     if (newlyCreated) {
       await notifyModFeed(thread, data, mode);
+
+      if (mode === 'showcase' && config.screenshotNudgeEnabled) {
+        scheduleNudgeCheck(thread, config.screenshotNudgeDelayMinutes * 60000);
+      }
     }
   } catch (err) {
     console.error('[threadCreate] failed to register thread:', err.message);
