@@ -1,6 +1,7 @@
 import { Events, EmbedBuilder } from 'discord.js';
 import { getDb, serverTimestamp } from '../firebase.js';
 import { getEffectiveConfig } from '../services/config.js';
+import { maybeSendHelpfulHint } from '../services/helpfulHint.js';
 
 export const name = Events.MessageCreate;
 export const once = false;
@@ -12,6 +13,10 @@ function seenUsersRef() {
 export async function execute(message) {
   if (message.author.bot) return;
   if (!message.guild) return;
+
+  // First comment from someone else in a showcase thread: privately teach the thread
+  // owner the helpful-emoji ritual (one DM per owner, ever). Fire-and-forget.
+  maybeSendHelpfulHint(message);
 
   try {
     const cfg = await getEffectiveConfig();
