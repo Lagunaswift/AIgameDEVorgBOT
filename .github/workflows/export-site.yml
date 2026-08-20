@@ -45,6 +45,14 @@ jobs:
       - name: Install bot dependencies
         run: npm ci
 
+      - name: Diagnose secret transport (prints fingerprint only, never the value)
+        env:
+          FSA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf 'len=%s\n' "${#FSA}"
+          printf '%s' "$FSA" | sha256sum
+          printf 'first_char_code=%d last_char_code=%d\n' "'${FSA:0:1}" "'${FSA: -1}"
+
       - name: Run export
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
