@@ -508,10 +508,31 @@ async function collectJamThreads(rest, guildId, forumIds) {
   return [...threadsById.values()];
 }
 
-async function processJamThread(rest, thread, guildId) {
+// Lifecycle phases a jam thread moves through, read from the forum tags the organiser
+// applies. Falls back to a sensible phase when no lifecycle tag is present.
+const JAM_PHASES = ['upcoming', 'active', 'voting', 'finished'];
+
+function resolveJamPhase(tagNames, archived) {
+  const lowered = tagNames.map((n) => n.toLowerCase().trim());
+  for (const phase of JAM_PHASES) {
+    if (lowered.includes(phase)) return phase;
+  }
+  return archived ? 'finished' : 'active';
+}
+
+async function processJamThread(rest, thread, guildId, forumTagCache) {
   const starterMessage = await getStarterMessage(rest, thread.id);
   const summary = extractText(starterMessage, 200);
   const archived = Boolean(thread.thread_metadata && thread.thread_metadata.archived);
+
+  let tagNames = [];
+  if (thread.parent_id && Array.isArray(thread.applied_tags) && thread.applied_tags.length) {
+    const tagMap = await getForumTagMap(rest, thread.parent_id, forumTagCache);
+    tagNames = thread.applied_tags
+      .map((id) => tagMap.get(id))
+      .filter(Boolean)
+      .map((t) => t.name);
+  }
 
   return {
     id: thread.id,
@@ -519,17 +540,20 @@ async function processJamThread(rest, thread, guildId) {
     summary,
     date: resolveCreatedAt(thread, null, thread.id),
     status: archived ? 'past' : 'active',
+    phase: resolveJamPhase(tagNames, archived),
+    tags: tagNames,
     threadUrl: `https://discord.com/channels/${guildId}/${thread.id}`,
   };
 }
 
 async function runJamsFlow(rest, forumIds) {
   const threads = await collectJamThreads(rest, config.guildId, forumIds);
+  const forumTagCache = new Map();
   const jams = [];
 
   for (const thread of threads) {
     try {
-      jams.push(await processJamThread(rest, thread, config.guildId));
+      jams.push(await processJamThread(rest, thread, config.guildId, forumTagCache));
     } catch (err) {
       console.warn(`[export] skipping jam thread ${thread.id}: ${err.message}`);
     }
