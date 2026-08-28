@@ -67,7 +67,7 @@ jobs:
 
       - name: Build staged site
         working-directory: site-staging
-        run: npm ci && npm run build
+        run: npm install --no-audit --no-fund && npm run build
 
       - name: Promote validated generated data and assets
         run: |
