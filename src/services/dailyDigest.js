@@ -144,12 +144,14 @@ export function isQuietDay(stats) {
   );
 }
 
-// Gather the chat half: read the day's messages and summarise them. Only explicitly
-// configured channels are eligible; an empty list disables transcript collection. Returns
-// null when the feature is off (no API key, no client, no channels) or collection fails; a
-// null chat never blocks the digest.
+// Gather the chat half: read the day's messages and summarise them. Which channels get
+// read defaults to the digest channel itself (summarise #general, post in #general);
+// DAILY_DIGEST_CHAT_CHANNEL_IDS widens that. Returns null when the feature is off (no API
+// key, no client, no channels) or collection fails; a null chat never blocks the digest.
 export function configuredChatChannelIds(cfg) {
-  return (cfg.dailyDigestChatChannelIds || []).filter(Boolean);
+  const explicit = (cfg.dailyDigestChatChannelIds || []).filter(Boolean);
+  if (explicit.length > 0) return explicit;
+  return [cfg.dailyDigestChannelId].filter(Boolean);
 }
 
 async function gatherChat(client, cfg, window, dateStr) {

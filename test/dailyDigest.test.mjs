@@ -10,14 +10,18 @@ const stats = {
   milestones: [],
 };
 
-test('daily digest never falls back to the posting channel for chat collection', () => {
+test('chat collection falls back to digest channel when no explicit channels configured', () => {
   assert.deepEqual(
     configuredChatChannelIds({ dailyDigestChannelId: 'general', dailyDigestChatChannelIds: [] }),
-    [],
+    ['general'],
   );
   assert.deepEqual(
     configuredChatChannelIds({ dailyDigestChannelId: 'general', dailyDigestChatChannelIds: ['explicit'] }),
     ['explicit'],
+  );
+  assert.deepEqual(
+    configuredChatChannelIds({ dailyDigestChannelId: null, dailyDigestChatChannelIds: [] }),
+    [],
   );
 });
 
