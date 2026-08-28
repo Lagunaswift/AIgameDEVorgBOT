@@ -370,10 +370,12 @@ async function processShowcaseThread(docSnap, ctx) {
   }
   const forumId = channel.parent_id || null;
   if (!forumId || forumId !== data.forumId || !sourceForumIds.has(forumId)) {
-    throw new Error(`showcase thread ${threadId} has an uncertain source forum`);
+    console.warn(`[export] warn: thread ${threadId} has an uncertain source forum (${forumId}), skipping`);
+    return null;
   }
   if (!Array.isArray(channel.applied_tags)) {
-    throw new Error(`showcase thread ${threadId} did not return applied_tags`);
+    console.warn(`[export] warn: thread ${threadId} did not return applied_tags, skipping`);
+    return null;
   }
 
   // This is the publication boundary: untagged threads never have their text or assets read.
