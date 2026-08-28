@@ -192,7 +192,7 @@ function prettyDate(dateStr) {
 
 // Discord message content caps at 2000 chars; stay well under so a mention that renders
 // longer than its raw form can't tip a full day over the edge.
-const CONTENT_BUDGET = 1800;
+const CONTENT_BUDGET = 1950;
 const MAX_BUILD_LINES = 6;
 const MAX_MILESTONE_LINES = 4;
 

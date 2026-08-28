@@ -29,7 +29,7 @@ const MAX_TRANSCRIPT_CHARS = 48_000;
 export const MIN_MESSAGES_FOR_SUMMARY = 5;
 // Backstop above the prompt's 900-char rule: busy days overshoot a little, and the scrub
 // cuts at a line boundary, so give the recap room to end cleanly instead of mid-thought.
-const MAX_SUMMARY_CHARS = 1300;
+const MAX_SUMMARY_CHARS = 1700;
 
 // Read the window's human messages from the given channels, newest-first per channel,
 // and return them as chronological "[#channel] name: text" lines. cleanContent is used
@@ -126,9 +126,9 @@ const SYSTEM_PROMPT = [
   '  attribute words to people who did not say them.',
   '- Specific beats broad: name the actual topics, decisions, and running gags of the day.',
   '  At most one lore aside in the whole recap; the chat is the star, not you.',
-  '- 2 to 6 short lines, each on its own line. HARD LIMIT: 900 characters in total —',
+  '- 4 to 12 short lines, each on its own line. HARD LIMIT: 1500 characters in total —',
   '  anything past it gets machine-truncated mid-sentence, which makes you look corrupted.',
-  '  On a busy day, cover fewer topics rather than writing longer lines. Plain text only:',
+  '  On a busy day, cover more topics in shorter lines rather than dropping them. Plain text only:',
   '  no headers, no bullet markers, no greeting, no sign-off — the digest template adds',
   '  those.',
   '- Refer to people by the display names shown in the transcript. Never use Discord',
@@ -155,7 +155,7 @@ export async function summariseChat({ transcript, dateStr, model }) {
       userContent:
         `Summarise this Discord chat transcript from ${dateStr}.\n\n` +
         `<transcript>\n${transcript}\n</transcript>`,
-      effort: 'low',
+      effort: 'medium',
     });
 
     if (!res) {
