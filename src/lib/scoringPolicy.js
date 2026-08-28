@@ -2,7 +2,7 @@
 // accidental zero/NaN settings and keep legacy-counter derivation reasonably small.
 export const SCORING_POLICY_BOUNDS = Object.freeze({
   minCommentLength: Object.freeze({ min: 1, max: 10_000 }),
-  maxPointsPerThreadPerUser: Object.freeze({ min: 1, max: 100 }),
+  maxPointsPerThreadPerUser: Object.freeze({ min: 1, max: 1000 }),
 });
 
 export function assertScoringPolicy(policy, source = 'scoring policy') {
