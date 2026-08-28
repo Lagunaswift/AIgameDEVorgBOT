@@ -8,6 +8,7 @@
 
 import { getDb } from '../firebase.js';
 import { config as envConfig } from '../config.js';
+import { assertScoringPolicy } from '../lib/scoringPolicy.js';
 
 const CACHE_TTL_MS = 60_000;
 
@@ -19,9 +20,11 @@ function emptyDoc() {
 }
 
 // Build the effective config by overlaying the Firestore doc onto the env baseline.
-function merge(docData) {
+// The scoring fields are validated after this overlay; callers must never score under an
+// invalid runtime override.
+export function buildEffectiveConfig(docData) {
   const d = docData || emptyDoc();
-  return {
+  const effective = {
     watchedShowcaseForumIds: d.watchedShowcaseForumIds ?? envConfig.watchedShowcaseForumIds,
     watchedCompetitionForumIds:
       d.watchedCompetitionForumIds ?? envConfig.watchedCompetitionForumIds,
@@ -48,6 +51,8 @@ function merge(docData) {
     gameIdeaCooldownSeconds: d.gameIdeaCooldownSeconds ?? envConfig.gameIdeaCooldownSeconds,
     gameIdeaDailyCap: d.gameIdeaDailyCap ?? envConfig.gameIdeaDailyCap,
   };
+  assertScoringPolicy(effective, 'Firestore effective scoring policy');
+  return effective;
 }
 
 function configRef() {
@@ -65,11 +70,26 @@ export async function getEffectiveConfig({ force = false } = {}) {
     const snap = await configRef().get();
     docData = snap.exists ? snap.data() : null;
   } catch (err) {
-    console.error('[config] failed to read config doc, falling back to env:', err.message);
+    if (cached) {
+      console.error('[config] failed to read config doc; retaining last known-good config:', err.message);
+      return cached;
+    }
+    throw new Error(`Unable to load runtime config; scoring is disabled: ${err.message}`);
   }
-  cached = merge(docData);
-  cachedAt = now;
-  return cached;
+  try {
+    const effective = buildEffectiveConfig(docData);
+    cached = effective;
+    cachedAt = now;
+    return cached;
+  } catch (err) {
+    // A bad admin override must not silently fall back to env values. Keep the last
+    // verified policy if we have one; a first-load failure disables scoring by throwing.
+    if (cached) {
+      console.error('[config] invalid runtime scoring policy; retaining last known-good config:', err.message);
+      return cached;
+    }
+    throw err;
+  }
 }
 
 // Returns the mode for a forum id, or null if it isn't watched.

@@ -5,6 +5,7 @@
 // to decide whether (and how) to score.
 
 import { getDb, serverTimestamp, Timestamp } from '../firebase.js';
+import { normalizeJamId, normalizeProjectUrl } from '../lib/publicMetadata.js';
 
 function threadsRef() {
   return getDb().collection('threads');
@@ -50,6 +51,20 @@ export async function registerThread(thread, mode) {
 export async function getThread(threadId) {
   const snap = await threadsRef().doc(threadId).get();
   return snap.exists ? snap.data() : null;
+}
+
+// Public metadata is set only by slash-command handlers after their ownership/mod checks.
+// Keeping it in the thread record means the exporter never has to infer it from prose.
+export async function setThreadProjectUrl(threadId, projectUrl) {
+  const normalized = normalizeProjectUrl(projectUrl);
+  if (!normalized) throw new Error('project URL must be an http(s) URL');
+  await threadsRef().doc(threadId).update({ projectUrl: normalized });
+}
+
+export async function assignThreadJam(threadId, jamId) {
+  const normalized = normalizeJamId(jamId);
+  if (!normalized) throw new Error('jam ID is invalid');
+  await threadsRef().doc(threadId).update({ jamId: normalized });
 }
 
 // All registered threads for a given mode.

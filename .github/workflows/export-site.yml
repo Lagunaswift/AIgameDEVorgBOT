@@ -1,5 +1,6 @@
 # Scheduled site refresh: pulls showcase games, screenshots, org stats, and jam
-# events from Discord/Firestore, writes them into the AIGAMEDEVSITE repo, and pushes.
+# events from Discord/Firestore into a staging clone of AIGAMEDEVSITE, validates and
+# builds it, then promotes only generated data/assets into the checked-out site repo.
 # Vercel then deploys the site automatically. Also runnable on demand from the
 # Actions tab ("Run workflow").
 #
@@ -9,6 +10,8 @@
 #   GUILD_ID                 - the Discord server id
 #   SITE_PUSH_TOKEN          - fine-grained PAT with Contents read/write on
 #                              Lagunaswift/AIGAMEDEVSITE
+# Required repository variable (Settings -> Secrets and variables -> Actions -> Variables):
+#   SITE_PUBLISH_TAG_ID      - Discord forum tag ID required for public project export
 
 name: Export site data
 
@@ -45,12 +48,35 @@ jobs:
       - name: Install bot dependencies
         run: npm ci
 
-      - name: Run export
+      - name: Clone site into staging
+        run: git clone --no-hardlinks site site-staging
+
+      - name: Create staging asset directories
+        run: mkdir -p site-staging/public/assets/showcase site-staging/public/assets/awards
+
+      - name: Run export into staging
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GUILD_ID: ${{ secrets.GUILD_ID }}
-        run: node scripts/export-site-data.mjs --jams-forum 1539971669467332728 --out site
+          SITE_PUBLISH_TAG_ID: ${{ vars.SITE_PUBLISH_TAG_ID }}
+        run: node scripts/export-site-data.mjs --jams-forum 1539971669467332728 --out site-staging --report site-staging/export-report.json
+
+      - name: Validate staged export
+        run: node scripts/validate-site-export.mjs --candidate site-staging --previous site --report site-staging/export-report.json
+
+      - name: Build staged site
+        working-directory: site-staging
+        run: npm ci && npm run build
+
+      - name: Promote validated generated data and assets
+        run: |
+          mkdir -p site-staging/public/assets/showcase site-staging/public/assets/awards
+          mkdir -p site/src/data site/public/assets/showcase site/public/assets/awards
+          cp site-staging/src/data/showcase.json site/src/data/showcase.json
+          cp site-staging/src/data/jams.json site/src/data/jams.json
+          rsync -a --delete site-staging/public/assets/showcase/ site/public/assets/showcase/
+          rsync -a --delete site-staging/public/assets/awards/ site/public/assets/awards/
 
       - name: Commit and push site data
         working-directory: site
@@ -59,7 +85,7 @@ jobs:
           # have a linked account) deploys the automated data commits.
           git config user.name "Lagunaswift"
           git config user.email "jamesswift1988@gmail.com"
-          git add -A
+          git add src/data/showcase.json src/data/jams.json public/assets/showcase public/assets/awards
           if git diff --cached --quiet; then
             echo "No data changes this run."
           else

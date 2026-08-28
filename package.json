@@ -8,7 +8,9 @@
     "start": "node src/index.js",
     "register": "node src/register-commands.js",
     "dev": "node --watch src/index.js",
-    "export:site": "node scripts/export-site-data.mjs --jams-forum 1539971669467332728"
+    "export:site": "node scripts/export-site-data.mjs --jams-forum 1539971669467332728",
+    "test": "node --test test/*.test.mjs",
+    "validate:site-export": "node scripts/validate-site-export.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

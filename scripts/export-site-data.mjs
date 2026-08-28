@@ -6,7 +6,7 @@
 // AIGAMEDEVSITE/src/data/CONTRACT.md.
 //
 // Usage:
-//   node scripts/export-site-data.mjs --out ../AIGAMEDEVSITE [--jams-forum <id[,id...]>] [--limit N] [--dry-run]
+//   node scripts/export-site-data.mjs --out ../AIGAMEDEVSITE --report ./export-report.json [--jams-forum <id[,id...]>] [--limit N] [--dry-run]
 
 import 'dotenv/config';
 import fs from 'node:fs/promises';
@@ -15,6 +15,13 @@ import sharp from 'sharp';
 import { REST } from 'discord.js';
 import { config } from '../src/config.js';
 import { initFirebase, getDb } from '../src/firebase.js';
+import {
+  parsePublishTagId,
+  preserveGeneratedAtIfUnchanged,
+  readJson,
+  removeStaleAssets,
+} from './site-export-safety.mjs';
+import { buildPublicGame } from './site-export-contract.mjs';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 const CONTENT_TYPE_EXT = {
@@ -27,13 +34,17 @@ const CONTENT_TYPE_EXT = {
 // ---------- CLI args ----------
 
 function parseArgs(argv) {
-  const args = { out: null, jamsForum: [], limit: null, dryRun: false };
+  const args = { out: null, report: null, jamsForum: [], limit: null, dryRun: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--out') {
       args.out = argv[i += 1];
     } else if (arg.startsWith('--out=')) {
       args.out = arg.slice('--out='.length);
+    } else if (arg === '--report') {
+      args.report = argv[i += 1];
+    } else if (arg.startsWith('--report=')) {
+      args.report = arg.slice('--report='.length);
     } else if (arg === '--jams-forum') {
       args.jamsForum = splitIds(argv[i += 1]);
     } else if (arg.startsWith('--jams-forum=')) {
@@ -67,11 +78,13 @@ function validateEnv(args) {
   if (!config.firebaseServiceAccount) missing.push('FIREBASE_SERVICE_ACCOUNT');
   if (!config.guildId) missing.push('GUILD_ID');
   if (!args.out) missing.push('--out');
+  if (!args.report) missing.push('--report');
   if (missing.length) {
     throw new Error(
       `export-site-data: missing required value(s): ${missing.join(', ')}`,
     );
   }
+  return parsePublishTagId(process.env.SITE_PUBLISH_TAG_ID);
 }
 
 // ---------- text extraction ----------
@@ -122,8 +135,8 @@ function isImageAttachment(att) {
 }
 
 // Returns a whitelisted extension for the attachment, or null when the format is not
-// one we can label truthfully (e.g. svg/bmp/avif uploads). A null lets the optimizer
-// try sharp anyway and cleanly skip the image when sharp cannot decode it either.
+// one we can label truthfully (e.g. svg/bmp/avif uploads). A null lets sharp determine
+// whether it can safely re-encode the asset; undecodable attachments fail the export.
 function resolveImageExt(att) {
   const ext = fileExt(att.filename);
   if (IMAGE_EXTS.includes(ext)) return ext;
@@ -142,9 +155,8 @@ const OPTIMIZED_QUALITY = 78;
 
 // Downloads an attachment and optimizes it for the site's showcase cards: resized to
 // card width and re-encoded as webp (animation preserved for gifs). Falls back to the
-// original bytes when sharp cannot decode the file. Removes stale same-thread variants
-// from earlier runs so extension changes never leave orphans. Returns the extension
-// actually written.
+// original bytes only when its declared extension is safe to preserve. Removes stale
+// same-thread variants from earlier runs so extension changes never leave orphans.
 async function downloadOptimizedAttachment(url, destDir, baseName, fallbackExt) {
   const res = await fetch(url);
   if (!res.ok) {
@@ -162,9 +174,7 @@ async function downloadOptimizedAttachment(url, destDir, baseName, fallbackExt) 
       .toBuffer();
   } catch (err) {
     if (!fallbackExt) {
-      // Not decodable by sharp AND not a format we can label truthfully: skip the image.
-      console.warn(`[export] unsupported image format for ${baseName} (${err.message}) - skipping`);
-      return null;
+      throw new Error(`unsupported image format for ${baseName}: ${err.message}`);
     }
     console.warn(`[export] optimization failed for ${baseName} (${err.message}) - keeping original`);
     ext = fallbackExt;
@@ -240,13 +250,15 @@ async function findOwnerFallbackImage(rest, threadId, ownerId) {
 async function getForumTagMap(rest, forumId, cache) {
   if (cache.has(forumId)) return cache.get(forumId);
   const map = new Map();
-  try {
-    const forum = await getChannel(rest, forumId);
-    for (const tag of forum.available_tags || []) {
-      map.set(tag.id, { name: tag.name, emojiId: tag.emoji_id || null, emojiName: tag.emoji_name || null });
+  const forum = await getChannel(rest, forumId);
+  if (!Array.isArray(forum.available_tags)) {
+    throw new Error(`forum ${forumId} did not return available_tags`);
+  }
+  for (const tag of forum.available_tags) {
+    if (!tag || !tag.id || !tag.name) {
+      throw new Error(`forum ${forumId} returned a malformed tag`);
     }
-  } catch (err) {
-    console.warn(`[export] could not resolve tags for forum ${forumId}: ${err.message}`);
+    map.set(tag.id, { name: tag.name, emojiId: tag.emoji_id || null, emojiName: tag.emoji_name || null });
   }
   cache.set(forumId, map);
   return map;
@@ -283,9 +295,11 @@ async function resolveAward(appliedTags, ctx) {
               await fs.mkdir(dir, { recursive: true });
               await fs.writeFile(path.join(dir, `${tag.emojiId}.webp`), buf);
               ok = true;
+            } else {
+              throw new Error(`Discord CDN returned ${res.status}`);
             }
           } catch (err) {
-            console.warn(`[export] award emoji download failed (${tag.emojiId}): ${err.message}`);
+            throw new Error(`award emoji download failed (${tag.emojiId}): ${err.message}`);
           }
         }
         ctx.awardEmojiCache.set(tag.emojiId, ok);
@@ -337,22 +351,36 @@ async function buildFeedbackPointsMap(db) {
 // ---------- showcase flow ----------
 
 async function processShowcaseThread(docSnap, ctx) {
-  const { rest, forumTagCache, pointsMap, dryRun, outDir } = ctx;
+  const { rest, forumTagCache, pointsMap, dryRun, outDir, publishTagId, sourceForumIds, withheldIds } = ctx;
   const threadId = docSnap.id;
   const data = docSnap.data();
 
-  let channel;
-  try {
-    channel = await getChannel(rest, threadId);
-  } catch (err) {
-    if (isMissingResource(err)) {
-      console.warn(`[export] showcase thread ${threadId} is gone (deleted?) - skipping`);
-      return null;
-    }
-    throw err;
+  const channel = await getChannel(rest, threadId);
+  const forumId = channel.parent_id || null;
+  if (!forumId || forumId !== data.forumId || !sourceForumIds.has(forumId)) {
+    throw new Error(`showcase thread ${threadId} has an uncertain source forum`);
+  }
+  if (!Array.isArray(channel.applied_tags)) {
+    throw new Error(`showcase thread ${threadId} did not return applied_tags`);
   }
 
+  // This is the publication boundary: untagged threads never have their text or assets read.
+  if (!channel.applied_tags.includes(publishTagId)) {
+    withheldIds.add(threadId);
+    return null;
+  }
+
+  const tagMap = await getForumTagMap(rest, forumId, forumTagCache);
+  const appliedTags = channel.applied_tags.map((id) => {
+    const tag = tagMap.get(id);
+    if (!tag) throw new Error(`showcase thread ${threadId} has an unknown tag ${id}`);
+    return tag;
+  });
+
   const starterMessage = await getStarterMessage(rest, threadId);
+  if (!starterMessage) {
+    throw new Error(`showcase thread ${threadId} has no accessible starter message`);
+  }
   const description = extractText(starterMessage, 280);
 
   const ownerId = data.ownerId || channel.owner_id || null;
@@ -366,17 +394,10 @@ async function processShowcaseThread(docSnap, ctx) {
     if (att) recovered = true;
   }
   if (att) {
-    // A download/optimize failure only costs the image, never the whole game: the game
-    // still exports with image null and lands on the missing-screenshots list.
     let ext = 'webp';
     if (!dryRun) {
-      try {
-        const destDir = path.join(outDir, 'public', 'assets', 'showcase');
-        ext = await downloadOptimizedAttachment(att.url, destDir, threadId, resolveImageExt(att));
-      } catch (err) {
-        console.warn(`[export] image download failed for thread ${threadId}: ${err.message}`);
-        ext = null;
-      }
+      const destDir = path.join(outDir, 'public', 'assets', 'showcase');
+      ext = await downloadOptimizedAttachment(att.url, destDir, threadId, resolveImageExt(att));
     }
     if (ext) {
       hasImage = true;
@@ -386,24 +407,16 @@ async function processShowcaseThread(docSnap, ctx) {
     }
   }
 
-  const forumId = channel.parent_id || data.forumId || null;
-  let tags = [];
-  let award = null;
-  if (forumId && Array.isArray(channel.applied_tags) && channel.applied_tags.length) {
-    const tagMap = await getForumTagMap(rest, forumId, forumTagCache);
-    const applied = channel.applied_tags.map((id) => tagMap.get(id)).filter(Boolean);
-    tags = applied.map((t) => t.name);
-    award = await resolveAward(applied, ctx);
-  }
+  const tags = appliedTags.map((tag) => tag.name);
+  const award = await resolveAward(appliedTags, ctx);
 
   const title = truncate((channel.name || data.title || '').trim(), 120);
 
   return {
-    game: {
+    game: buildPublicGame({
       id: threadId,
       title,
       author: data.ownerTag || null,
-      authorId: ownerId,
       description,
       image,
       threadUrl: `https://discord.com/channels/${config.guildId}/${threadId}`,
@@ -411,8 +424,9 @@ async function processShowcaseThread(docSnap, ctx) {
       feedbackPoints: pointsMap.get(threadId) || 0,
       tags,
       award,
-      forumId,
-    },
+      projectUrl: data.projectUrl ?? null,
+      jamId: data.jamId ?? null,
+    }),
     hasImage,
     recovered,
   };
@@ -424,29 +438,45 @@ async function runShowcaseFlow(rest, db, args) {
   let threadDocs = threadsSnap.docs;
   if (args.limit) threadDocs = threadDocs.slice(0, args.limit);
 
+  const sourceForumIds = new Set();
+  for (const docSnap of threadDocs) {
+    const forumId = docSnap.data().forumId;
+    if (!forumId || !/^\d{17,20}$/.test(forumId)) {
+      throw new Error(`showcase thread ${docSnap.id} has no valid source forum id`);
+    }
+    sourceForumIds.add(forumId);
+  }
+
   const forumTagCache = new Map();
   const awardEmojiCache = new Map();
+  for (const forumId of sourceForumIds) {
+    const tags = await getForumTagMap(rest, forumId, forumTagCache);
+    if (!tags.has(args.publishTagId)) {
+      throw new Error(`SITE_PUBLISH_TAG_ID is not available in showcase forum ${forumId}`);
+    }
+  }
+
   const games = [];
   const missingScreenshots = [];
+  const withheldIds = new Set();
   let recoveredCount = 0;
 
   for (const docSnap of threadDocs) {
-    try {
-      const result = await processShowcaseThread(docSnap, {
-        rest,
-        forumTagCache,
-        awardEmojiCache,
-        pointsMap,
-        dryRun: args.dryRun,
-        outDir: args.out,
-      });
-      if (!result) continue;
-      games.push(result.game);
-      if (!result.hasImage) missingScreenshots.push(result.game.title);
-      if (result.recovered) recoveredCount += 1;
-    } catch (err) {
-      console.warn(`[export] skipping showcase thread ${docSnap.id}: ${err.message}`);
-    }
+    const result = await processShowcaseThread(docSnap, {
+      rest,
+      forumTagCache,
+      awardEmojiCache,
+      pointsMap,
+      dryRun: args.dryRun,
+      outDir: args.out,
+      publishTagId: args.publishTagId,
+      sourceForumIds,
+      withheldIds,
+    });
+    if (!result) continue;
+    games.push(result.game);
+    if (!result.hasImage) missingScreenshots.push(result.game.title);
+    if (result.recovered) recoveredCount += 1;
   }
 
   games.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -454,7 +484,7 @@ async function runShowcaseFlow(rest, db, args) {
   let totalFeedbackPoints = 0;
   for (const count of pointsMap.values()) totalFeedbackPoints += count;
 
-  return { games, missingScreenshots, recoveredCount, totalFeedbackPoints };
+  return { games, missingScreenshots, recoveredCount, totalFeedbackPoints, withheldIds: [...withheldIds].sort() };
 }
 
 // ---------- jams flow ----------
@@ -462,13 +492,8 @@ async function runShowcaseFlow(rest, db, args) {
 async function collectJamThreads(rest, guildId, forumIds) {
   const threadsById = new Map();
 
-  let activeThreads = [];
-  try {
-    const activeResp = await rest.get(`/guilds/${guildId}/threads/active`);
-    activeThreads = activeResp.threads || [];
-  } catch (err) {
-    console.warn(`[export] failed to fetch active threads: ${err.message}`);
-  }
+  const activeResp = await rest.get(`/guilds/${guildId}/threads/active`);
+  const activeThreads = activeResp.threads || [];
   for (const thread of activeThreads) {
     if (forumIds.includes(thread.parent_id)) threadsById.set(thread.id, thread);
   }
@@ -481,13 +506,7 @@ async function collectJamThreads(rest, guildId, forumIds) {
       query.set('limit', '100');
       if (before) query.set('before', before);
 
-      let page;
-      try {
-        page = await rest.get(`/channels/${forumId}/threads/archived/public`, { query });
-      } catch (err) {
-        console.warn(`[export] failed to fetch archived threads for forum ${forumId}: ${err.message}`);
-        break;
-      }
+      const page = await rest.get(`/channels/${forumId}/threads/archived/public`, { query });
 
       const threads = page.threads || [];
       for (const thread of threads) {
@@ -552,11 +571,7 @@ async function runJamsFlow(rest, forumIds) {
   const jams = [];
 
   for (const thread of threads) {
-    try {
-      jams.push(await processJamThread(rest, thread, config.guildId, forumTagCache));
-    } catch (err) {
-      console.warn(`[export] skipping jam thread ${thread.id}: ${err.message}`);
-    }
+    jams.push(await processJamThread(rest, thread, config.guildId, forumTagCache));
   }
 
   jams.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -569,27 +584,43 @@ async function writeJson(outDir, fileName, payload) {
   const dataDir = path.join(outDir, 'src', 'data');
   await fs.mkdir(dataDir, { recursive: true });
   const filePath = path.join(dataDir, fileName);
-  await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`);
+  let previous = null;
+  try {
+    previous = await readJson(filePath);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const stablePayload = preserveGeneratedAtIfUnchanged(previous, payload);
+  await fs.writeFile(filePath, `${JSON.stringify(stablePayload, null, 2)}\n`);
   return filePath;
+}
+
+async function writeReport(filePath, report) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(report, null, 2)}\n`);
+}
+
+async function cleanExportAssets(outDir, games) {
+  const showcaseAssets = games.filter((game) => game.image).map((game) => game.image);
+  const awardAssets = games
+    .filter((game) => game.award && game.award.emoji)
+    .map((game) => game.award.emoji);
+  await removeStaleAssets(path.join(outDir, 'public', 'assets', 'showcase'), showcaseAssets);
+  await removeStaleAssets(path.join(outDir, 'public', 'assets', 'awards'), awardAssets);
 }
 
 // ---------- org stats ----------
 
-// Live counters for the site's org-status card. Member count comes from the guild
-// endpoint's approximate counts; a failure is non-fatal (the site falls back to
-// showing nothing rather than a stale or fake number).
+// Live counters for the site's org-status card. A count lookup failure fails the staged
+// export rather than replacing a previously complete snapshot with partial stats.
 async function fetchGuildMemberCount(rest, guildId) {
-  try {
-    const guild = await rest.get(`/guilds/${guildId}`, {
-      query: new URLSearchParams({ with_counts: 'true' }),
-    });
-    return typeof guild.approximate_member_count === 'number'
-      ? guild.approximate_member_count
-      : null;
-  } catch (err) {
-    console.warn(`[export] could not fetch guild member count: ${err.message}`);
-    return null;
+  const guild = await rest.get(`/guilds/${guildId}`, {
+    query: new URLSearchParams({ with_counts: 'true' }),
+  });
+  if (typeof guild.approximate_member_count !== 'number') {
+    throw new Error('guild lookup did not return approximate_member_count');
   }
+  return guild.approximate_member_count;
 }
 
 // ---------- summary ----------
@@ -624,14 +655,14 @@ function printSummary({ games, missingScreenshots, recoveredCount, jams, jamsReq
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  validateEnv(args);
+  args.publishTagId = validateEnv(args);
   args.out = path.resolve(args.out);
 
   initFirebase();
   const db = getDb();
   const rest = new REST({ version: '10' }).setToken(config.discordToken);
 
-  const { games, missingScreenshots, recoveredCount, totalFeedbackPoints } =
+  const { games, missingScreenshots, recoveredCount, totalFeedbackPoints, withheldIds } =
     await runShowcaseFlow(rest, db, args);
 
   const memberCount = await fetchGuildMemberCount(rest, config.guildId);
@@ -646,14 +677,17 @@ async function main() {
 
   const filesWritten = [];
   if (!args.dryRun) {
+    await writeReport(args.report, { version: 1, withheldIds });
+    filesWritten.push(args.report);
     const showcasePath = await writeJson(args.out, 'showcase.json', {
-      version: 1,
+      version: 2,
       generatedAt: new Date().toISOString(),
       guildId: config.guildId,
       stats,
       games,
     });
     filesWritten.push(showcasePath);
+    await cleanExportAssets(args.out, games);
   }
 
   const jamsRequested = args.jamsForum.length > 0;
@@ -662,7 +696,7 @@ async function main() {
     jams = await runJamsFlow(rest, args.jamsForum);
     if (!args.dryRun) {
       const jamsPath = await writeJson(args.out, 'jams.json', {
-        version: 1,
+        version: 2,
         generatedAt: new Date().toISOString(),
         jams,
       });

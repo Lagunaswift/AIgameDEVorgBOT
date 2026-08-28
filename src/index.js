@@ -7,6 +7,7 @@ import { loadCommands } from './loadCommands.js';
 import { registerGuildCommands } from './lib/registerCommands.js';
 import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js';
 import { scheduleDailyDigest, catchUpDailyDigest } from './services/dailyDigest.js';
+import { getEffectiveConfig } from './services/config.js';
 
 // Event modules, imported once and bound at startup.
 import * as ready from './events/ready.js';
@@ -28,6 +29,9 @@ const EVENT_MODULES = [
 async function main() {
   assertConfig();
   initFirebase();
+  // Load and validate the Firestore overlay before accepting Discord events. A bad or
+  // unavailable first policy must disable scoring rather than quietly using defaults.
+  await getEffectiveConfig({ force: true });
 
   const client = new Client({
     // Gateway intents. MessageContent is privileged and needed to read comment length

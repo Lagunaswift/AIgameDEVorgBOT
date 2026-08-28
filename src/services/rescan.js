@@ -53,6 +53,7 @@ async function rescanShowcaseThread(thread, threadDoc, cfg) {
       reactorId: threadDoc.ownerId,
       comment: message,
       cfg,
+      source: 'rescan',
     });
     if (result === AwardResult.AWARDED) awarded += 1;
   }

@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { modeForForum, getEffectiveConfig } from '../services/config.js';
 import { registerThread } from '../services/threads.js';
 import { scheduleNudgeCheck } from '../services/screenshotNudge.js';
+import { maybeSendHelpfulHintForThread } from '../services/helpfulHint.js';
 
 export const name = Events.ThreadCreate;
 export const once = false;
@@ -21,6 +22,9 @@ export async function execute(thread, newlyCreated) {
     );
 
     if (newlyCreated) {
+      if (mode === 'showcase') {
+        await maybeSendHelpfulHintForThread(thread);
+      }
       await notifyModFeed(thread, data, mode);
 
       if (mode === 'showcase' && config.screenshotNudgeEnabled) {

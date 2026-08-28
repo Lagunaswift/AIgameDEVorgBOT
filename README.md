@@ -38,7 +38,8 @@ A point is awarded only if **all** of these pass, checked in this order
 2. The comment author is **not** the thread owner (no self-scoring).
 3. The comment author is **not** a bot.
 4. The comment text length is **≥ `minCommentLength`** (default 80 — kills one-liners).
-5. The commenter is **under `maxPointsPerThreadPerUser`** for this thread (default 2).
+5. The commenter is **under `maxPointsPerThreadPerUser`** for this thread (default 2),
+   enforced atomically with the point write.
 6. The comment hasn't already been scored (deterministic point id prevents double-scoring).
 
 If the owner removes their reaction, the point is **revoked**
@@ -51,6 +52,9 @@ If the owner removes their reaction, the point is **revoked**
 - No scoring your own comments.
 - Cap on points per commenter per thread.
 - Deterministic point doc id (`${threadId}_${commentMessageId}`) prevents double-scoring.
+- A transactional per-thread/commenter counter prevents concurrent reactions from slipping
+  around the cap; it is verified against canonical point records and reconstructed for
+  legacy records when absent.
 - Reaction-remove revokes the point.
 
 AI quality-grading of comments is **out of scope for v1** — the human tick is the quality
@@ -75,11 +79,24 @@ mode: "showcase" | "competition", createdAt, registeredAt
 
 ```
 threadId, commentMessageId, commenterId, commenterTag,
-threadOwnerId, isoWeek (e.g. "2026-W26"), awardedAt
+threadOwnerId, source: "live" | "rescan", isoWeek, eventAt, awardedAt
 ```
 
 One point per document. Total score = count of docs where `commenterId = user`.
-Weekly score = same, filtered by `isoWeek = current week`.
+Live points store the observed ISO week (for example `"2026-W26"`) and event time. Rescan
+points store `isoWeek: null` and `eventAt: null`: their `awardedAt` is recovery time, not
+fabricated historical event time, so they count all-time but never in a weekly board.
+Weekly score = points filtered by `isoWeek = current week`.
+
+**`pointCounters`** (doc id = `${threadId}_${commenterId}`)
+
+```
+threadId, commenterId, count, updatedAt
+```
+
+This is an internal transactional cap counter, not a leaderboard source. Canonical `points`
+records remain the source of truth; a missing legacy counter is derived from those records,
+excluding manual adjustment events.
 
 **`config`** (doc id = `guildId`, optional) — overrides env values without a redeploy:
 
@@ -205,7 +222,7 @@ BYTE_EMOJI=                   # optional — Byte's server emoji (id or <:byte:i
 DAILY_DIGEST_AVATAR_URL=      # optional — explicit avatar override (else derived from BYTE_EMOJI)
 ANTHROPIC_API_KEY=            # optional — enables the digest's chat recap (off without it)
 DAILY_DIGEST_MODEL=claude-opus-5      # optional — claude-haiku-4-5 for ~5x cheaper recaps
-DAILY_DIGEST_CHAT_CHANNEL_IDS=        # optional — channels to recap; defaults to the digest channel
+DAILY_DIGEST_CHAT_CHANNEL_IDS=        # optional — explicit public channels to recap; recommend #general only
 GAME_IDEA_MODEL=claude-opus-5         # optional — /gameidea model
 GAME_IDEA_COOLDOWN_SECONDS=300        # optional — per-user /gameidea cooldown (mods bypass)
 GAME_IDEA_DAILY_CAP=30                # optional — server-wide /gameidea API calls per day
@@ -216,7 +233,11 @@ a one-value change with no logic edit. **For a custom emoji, the value is the em
 matching is done on `reaction.emoji.id` rather than name, so renaming the emoji doesn't
 break scoring.
 
-A Firestore `config` doc (id = `guildId`) overrides any of these at runtime.
+A Firestore `config` doc (id = `guildId`) overrides any of these at runtime. Scoring-policy
+overrides are strict: `minCommentLength` must be an integer in **1–10,000** and
+`maxPointsPerThreadPerUser` an integer in **1–100**. Invalid env values fail startup. An
+invalid/unavailable Firestore policy retains the last known-good effective config when one is
+cached; without one scoring is disabled rather than falling back permissively.
 
 ---
 
@@ -320,10 +341,14 @@ How the pieces work:
   previews): the transcript is capped, the output is capped, so worst-case spend is fixed —
   typically pennies a day on the default `claude-opus-5`, and `DAILY_DIGEST_MODEL=claude-haiku-4-5`
   is ~5x cheaper. Without a key the digest still posts, just template-only.
-- **Which chat gets read:** `DAILY_DIGEST_CHAT_CHANNEL_IDS`, defaulting to the digest
-  channel itself (recap #general, post in #general). The recap is public output, so only
-  list channels the whole server may see summarised — never mod or private channels. The
-  bot reads up to 1,200 recent messages per channel per day (bots excluded).
+- **Which chat gets read:** only channels explicitly listed in
+  `DAILY_DIGEST_CHAT_CHANNEL_IDS` are read. We recommend configuring `#general` as the sole
+  channel. An empty list disables transcript collection and the Anthropic chat recap while
+  template event lines remain active. The recap is public output, so only list public
+  channels the whole server may see summarised — never DMs, mod, or private channels. The
+  bot reads up to 1,200 recent messages per channel per day (bots excluded). Transcripts
+  are held in memory during bot processing; no transcript persistence is intentionally
+  implemented. This does not make claims about Anthropic retention.
 - **Prompt-injection defences**, because members on an AI server will try: instructions
   live in the system prompt while chat arrives as delimited untrusted data; the prompt
   treats in-chat "instructions" as content; fake closing delimiters are stripped from
@@ -400,6 +425,10 @@ above the reward roles. Re-checked on each point award. Off by default
 - **Always-on is a hard requirement.** Reactions added while the bot is down are lost and
   **not replayed by Discord**. `/rescan` is the only backfill path, so keep the Railway
   service from sleeping.
+- The add/remove race is bounded by re-checking the owner's helpful reaction immediately
+  after a live award and revoking when it is already gone. This is not perfect historical
+  recovery; `/rescan` only awards currently observable owner reactions and intentionally
+  does not assign them a weekly period.
 - All partial fetches are wrapped in try/catch and bail safely rather than throwing.
 - discord.js auto-reconnects; handlers are registered **once at startup**, not per
   connection.

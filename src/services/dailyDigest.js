@@ -144,19 +144,18 @@ export function isQuietDay(stats) {
   );
 }
 
-// Gather the chat half: read the day's messages and summarise them. Which channels get
-// read defaults to the digest channel itself (summarise #general, post in #general);
-// DAILY_DIGEST_CHAT_CHANNEL_IDS widens that — never add channels the whole server
-// shouldn't see recapped. Returns null when the feature is off (no API key, no client,
-// no channels) or collection fails; a null chat never blocks the digest.
+// Gather the chat half: read the day's messages and summarise them. Only explicitly
+// configured channels are eligible; an empty list disables transcript collection. Returns
+// null when the feature is off (no API key, no client, no channels) or collection fails; a
+// null chat never blocks the digest.
+export function configuredChatChannelIds(cfg) {
+  return (cfg.dailyDigestChatChannelIds || []).filter(Boolean);
+}
+
 async function gatherChat(client, cfg, window, dateStr) {
   if (!client || !anthropicConfigured()) return null;
 
-  const channelIds = (
-    cfg.dailyDigestChatChannelIds?.length
-      ? cfg.dailyDigestChatChannelIds
-      : [cfg.dailyDigestChannelId]
-  ).filter(Boolean);
+  const channelIds = configuredChatChannelIds(cfg);
   if (channelIds.length === 0) return null;
 
   try {
@@ -219,7 +218,11 @@ function chatLines(chat) {
 
   if (chat.summary) {
     const where = chat.channelsRead > 1 ? ` across ${chat.channelsRead} channels` : '';
-    return [`💬 **The chat, condensed** (${n} ${plural(n, 'message')}${where}):`, chat.summary];
+    return [
+      `💬 **The chat, condensed** (${n} ${plural(n, 'message')}${where}):`,
+      chat.summary,
+      '— Summarises configured public channels using Anthropic.',
+    ];
   }
   if (n < MIN_MESSAGES_FOR_SUMMARY) {
     return [`💬 A quiet **${n} ${plural(n, 'message')}** in chat. Barely worth a sector.`];

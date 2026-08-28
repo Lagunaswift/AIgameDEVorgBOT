@@ -9,7 +9,7 @@ import { resolveReactionPartials } from '../lib/partials.js';
 import { emojiMatches } from '../lib/emoji.js';
 import { getEffectiveConfig } from '../services/config.js';
 import { getThread } from '../services/threads.js';
-import { tryAwardPoint, AwardResult } from '../services/scoring.js';
+import { tryAwardPoint, revokePoint, AwardResult } from '../services/scoring.js';
 import { applyRewardRoles } from '../services/rewards.js';
 import { checkMilestones } from '../services/milestones.js';
 
@@ -58,6 +58,25 @@ async function handleShowcase({ reaction, user, thread, cfg }) {
   });
 
   if (result === AwardResult.AWARDED) {
+    // Discord can deliver add/remove close together. Re-read the reaction membership
+    // after the transaction so a removed helpful mark cannot leave a live point behind.
+    let ownerStillReacted;
+    try {
+      const users = await reaction.users.fetch();
+      ownerStillReacted = users.has(thread.ownerId);
+    } catch (err) {
+      console.error(`[showcase] could not verify helpful reaction after award comment=${comment.id}:`, err.message);
+      ownerStillReacted = true;
+    }
+    if (!ownerStillReacted) {
+      await revokePoint({
+        thread,
+        removerId: thread.ownerId,
+        commentMessageId: comment.id,
+      });
+      console.log(`[showcase] point revoked after add/remove race thread=${thread.threadId} comment=${comment.id}`);
+      return;
+    }
     console.log(
       `[showcase] point -> ${point.commenterTag} (${point.commenterId}) thread=${thread.threadId} week=${point.isoWeek}`,
     );

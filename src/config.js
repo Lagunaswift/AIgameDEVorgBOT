@@ -4,6 +4,8 @@
 // change without a redeploy (see services/config.js for the merge). This module is
 // the static, env-backed baseline that the bot boots with.
 
+import { assertScoringPolicy } from './lib/scoringPolicy.js';
+
 function parseIdList(value) {
   if (!value) return [];
   return value
@@ -15,6 +17,12 @@ function parseIdList(value) {
 function intOr(value, fallback) {
   const n = Number.parseInt(value, 10);
   return Number.isFinite(n) ? n : fallback;
+}
+
+// Scoring settings must not use intOr: malformed values must fail startup rather than
+// silently reverting to a permissive default.
+function scoringInt(value, fallback) {
+  return value === undefined ? fallback : Number(value);
 }
 
 function parseJson(value, fallback) {
@@ -36,8 +44,8 @@ export const config = {
   // We match on id when the value is all digits, otherwise on the unicode name.
   helpfulEmoji: process.env.HELPFUL_EMOJI || '✅',
 
-  minCommentLength: intOr(process.env.MIN_COMMENT_LENGTH, 0),
-  maxPointsPerThreadPerUser: intOr(process.env.MAX_POINTS_PER_THREAD_PER_USER, 2),
+  minCommentLength: scoringInt(process.env.MIN_COMMENT_LENGTH, 80),
+  maxPointsPerThreadPerUser: scoringInt(process.env.MAX_POINTS_PER_THREAD_PER_USER, 2),
 
   leaderboardChannelId: process.env.LEADERBOARD_CHANNEL_ID || null,
   modFeedChannelId: process.env.MOD_FEED_CHANNEL_ID || null,
@@ -99,10 +107,9 @@ export const config = {
   // Default 💾 until the server has real Byte art uploaded as an emoji.
   byteEmoji: process.env.BYTE_EMOJI || null,
 
-  // The chat-recap half of the digest (services/chatSummary.js). Off without an API key —
-  // the digest then posts its template-only version. Which channels get read defaults to
-  // the digest channel itself; DAILY_DIGEST_CHAT_CHANNEL_IDS widens that. The key is env
-  // only (it's a secret); model and channel list are also overridable via the config doc.
+  // The chat-recap half of the digest (services/chatSummary.js). Off without an API key or
+  // an explicit channel list — the digest then posts its template-only version. The key is
+  // env only (it's a secret); model and channel list are also overridable via the config doc.
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
   dailyDigestModel: process.env.DAILY_DIGEST_MODEL || 'claude-opus-5',
   dailyDigestChatChannelIds: parseIdList(process.env.DAILY_DIGEST_CHAT_CHANNEL_IDS),
@@ -133,6 +140,10 @@ export function assertConfig() {
   if (missing.length) {
     throw new Error(`Missing required env vars: ${missing.join(', ')}`);
   }
+
+  // Dynamic Firestore config is validated again after it overlays this baseline.
+  // Validate env here first so a malformed deployment never starts scoring at all.
+  assertScoringPolicy(config, 'environment scoring policy');
 
   if (
     config.watchedShowcaseForumIds.length === 0 &&
