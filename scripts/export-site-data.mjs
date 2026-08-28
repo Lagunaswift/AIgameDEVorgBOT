@@ -195,7 +195,10 @@ async function downloadOptimizedAttachment(url, destDir, baseName, fallbackExt) 
 // ---------- Discord REST helpers ----------
 
 function isMissingResource(err) {
-  return err && (err.status === 404 || err.status === 403);
+  if (!err) return false;
+  if (err.status === 404 || err.status === 403) return true;
+  if (err.code === 10003 || err.code === 10004) return true;
+  return false;
 }
 
 async function getChannel(rest, id) {
@@ -355,7 +358,16 @@ async function processShowcaseThread(docSnap, ctx) {
   const threadId = docSnap.id;
   const data = docSnap.data();
 
-  const channel = await getChannel(rest, threadId);
+  let channel;
+  try {
+    channel = await getChannel(rest, threadId);
+  } catch (err) {
+    if (isMissingResource(err)) {
+      console.warn(`[export] warn: thread ${threadId} no longer exists, skipping`);
+      return null;
+    }
+    throw err;
+  }
   const forumId = channel.parent_id || null;
   if (!forumId || forumId !== data.forumId || !sourceForumIds.has(forumId)) {
     throw new Error(`showcase thread ${threadId} has an uncertain source forum`);
@@ -450,7 +462,17 @@ async function runShowcaseFlow(rest, db, args) {
   const forumTagCache = new Map();
   const awardEmojiCache = new Map();
   for (const forumId of sourceForumIds) {
-    const tags = await getForumTagMap(rest, forumId, forumTagCache);
+    let tags;
+    try {
+      tags = await getForumTagMap(rest, forumId, forumTagCache);
+    } catch (err) {
+      if (isMissingResource(err)) {
+        console.warn(`[export] warn: forum ${forumId} no longer exists, skipping its threads`);
+        sourceForumIds.delete(forumId);
+        continue;
+      }
+      throw err;
+    }
     if (!tags.has(args.publishTagId)) {
       throw new Error(`SITE_PUBLISH_TAG_ID is not available in showcase forum ${forumId}`);
     }
