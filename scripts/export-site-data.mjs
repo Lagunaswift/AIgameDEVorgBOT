@@ -364,6 +364,7 @@ async function processShowcaseThread(docSnap, ctx) {
   } catch (err) {
     if (isMissingResource(err)) {
       console.warn(`[export] warn: thread ${threadId} no longer exists, skipping`);
+      withheldIds.add(threadId);
       return null;
     }
     throw err;
@@ -371,10 +372,12 @@ async function processShowcaseThread(docSnap, ctx) {
   const forumId = channel.parent_id || null;
   if (!forumId || forumId !== data.forumId || !sourceForumIds.has(forumId)) {
     console.warn(`[export] warn: thread ${threadId} has an uncertain source forum (${forumId}), skipping`);
+    withheldIds.add(threadId);
     return null;
   }
   if (!Array.isArray(channel.applied_tags)) {
     console.warn(`[export] warn: thread ${threadId} did not return applied_tags, skipping`);
+    withheldIds.add(threadId);
     return null;
   }
 
