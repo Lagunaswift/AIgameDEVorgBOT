@@ -127,6 +127,10 @@ export const config = {
   screenshotNudgeEnabled:
     (process.env.SCREENSHOT_NUDGE_ENABLED || 'true').toLowerCase() !== 'false',
   screenshotNudgeDelayMinutes: intOr(process.env.SCREENSHOT_NUDGE_DELAY_MINUTES, 10),
+
+  guidelinesNudgeEnabled:
+    (process.env.GUIDELINES_NUDGE_ENABLED || 'true').toLowerCase() !== 'false',
+  guidelinesNudgeDelayMinutes: intOr(process.env.GUIDELINES_NUDGE_DELAY_MINUTES, 10),
 };
 
 // Validate the essentials at boot so we fail loud rather than silently mis-scoring later.

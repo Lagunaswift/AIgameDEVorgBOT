@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { modeForForum, getEffectiveConfig } from '../services/config.js';
 import { registerThread } from '../services/threads.js';
 import { scheduleNudgeCheck } from '../services/screenshotNudge.js';
+import { scheduleGuidelinesCheck } from '../services/guidelinesNudge.js';
 import { maybeSendHelpfulHintForThread } from '../services/helpfulHint.js';
 
 export const name = Events.ThreadCreate;
@@ -29,6 +30,9 @@ export async function execute(thread, newlyCreated) {
 
       if (mode === 'showcase' && config.screenshotNudgeEnabled) {
         scheduleNudgeCheck(thread, config.screenshotNudgeDelayMinutes * 60000);
+      }
+      if (mode === 'showcase' && config.guidelinesNudgeEnabled) {
+        scheduleGuidelinesCheck(thread, config.guidelinesNudgeDelayMinutes * 60000);
       }
     }
   } catch (err) {
