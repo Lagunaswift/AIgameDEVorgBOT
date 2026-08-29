@@ -40,10 +40,6 @@ const postHelpCommand = {
     .setDescription('(Mod) Post and pin the command reference in this channel.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   async execute(interaction) {
-    if (!isMod(interaction)) {
-      return interaction.reply({ content: 'Mod-only command.', flags: MessageFlags.Ephemeral });
-    }
-
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     let msg;
