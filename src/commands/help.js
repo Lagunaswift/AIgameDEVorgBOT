@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
 
 const COMMUNITY_COMMANDS = [
@@ -57,7 +57,7 @@ const helpCommand = {
     const showMod = isMod(interaction);
     await interaction.reply({
       embeds: [buildHelpEmbed({ showMod })],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };
@@ -69,13 +69,18 @@ const postHelpCommand = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   async execute(interaction) {
     if (!isMod(interaction)) {
-      return interaction.reply({ content: 'Mod-only command.', ephemeral: true });
+      return interaction.reply({ content: 'Mod-only command.', flags: MessageFlags.Ephemeral });
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const embed = buildHelpEmbed({ showMod: true });
-    const msg = await interaction.channel.send({ embeds: [embed] });
+    let msg;
+    try {
+      const embed = buildHelpEmbed({ showMod: true });
+      msg = await interaction.channel.send({ embeds: [embed] });
+    } catch (err) {
+      return interaction.editReply(`Could not send to this channel — the bot may be missing Send Messages or Embed Links permission here. (${err.message})`);
+    }
 
     try {
       await msg.pin();
