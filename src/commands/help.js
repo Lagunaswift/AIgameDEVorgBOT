@@ -1,5 +1,4 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
-import { isMod } from '../lib/permissions.js';
 
 const COMMUNITY_COMMANDS = [
   ['`/mystats`', 'See your feedback points, weekly count, and rank.'],
@@ -11,42 +10,16 @@ const COMMUNITY_COMMANDS = [
   ['`/help`', 'This command. Shows what every command does.'],
 ];
 
-const MOD_COMMANDS = [
-  ['`/dailydigest`', 'Preview or post the daily digest on demand.'],
-  ['`/nudgescreenshots`', 'Find showcase threads missing a screenshot.'],
-  ['`/rescan`', 'Backfill thread data after downtime.'],
-  ['`/postleaderboard`', 'Manually post the weekly leaderboard.'],
-  ['`/points adjust`', 'Add or remove feedback points with an audit record.'],
-  ['`/points reset`', "Zero a user's points and milestone markers."],
-  ['`/registerforum`', 'Add a forum channel to the watch list.'],
-  ['`/seedusers`', 'Pre-populate known users from recent activity.'],
-  ['`/logopoll`', 'Post a poll of logo-competition finalists.'],
-  ['`/logovotes`', 'Tally logo-competition reaction votes.'],
-  ['`/jamvotes`', 'Tally votes for a jam by forum tag.'],
-  ['`/assignjam`', 'Assign the current thread to a jam ID.'],
-  ['`/communitynote nominate`', 'Community note curation checklist.'],
-  ['`/posthelp`', 'Post and pin this help card in the current channel.'],
-];
-
-function buildHelpEmbed({ showMod = false } = {}) {
-  const embed = new EmbedBuilder()
+function buildHelpEmbed() {
+  return new EmbedBuilder()
     .setColor(0xd95d1e)
     .setTitle('Byte — Command Reference')
     .setDescription('Everything the bot can do, and when to use it.')
     .addFields({
-      name: 'Community',
+      name: 'Commands',
       value: COMMUNITY_COMMANDS.map(([cmd, desc]) => `${cmd} — ${desc}`).join('\n'),
-    });
-
-  if (showMod) {
-    embed.addFields({
-      name: 'Mod-only',
-      value: MOD_COMMANDS.map(([cmd, desc]) => `${cmd} — ${desc}`).join('\n'),
-    });
-  }
-
-  embed.setFooter({ text: 'Use any community command anywhere. Mod commands require Manage Server or the mod role.' });
-  return embed;
+    })
+    .setFooter({ text: 'Use any command in any channel.' });
 }
 
 const helpCommand = {
@@ -54,9 +27,8 @@ const helpCommand = {
     .setName('help')
     .setDescription('Shows available bot commands and what they do.'),
   async execute(interaction) {
-    const showMod = isMod(interaction);
     await interaction.reply({
-      embeds: [buildHelpEmbed({ showMod })],
+      embeds: [buildHelpEmbed()],
       flags: MessageFlags.Ephemeral,
     });
   },
@@ -76,8 +48,7 @@ const postHelpCommand = {
 
     let msg;
     try {
-      const embed = buildHelpEmbed({ showMod: true });
-      msg = await interaction.channel.send({ embeds: [embed] });
+      msg = await interaction.channel.send({ embeds: [buildHelpEmbed()] });
     } catch (err) {
       return interaction.editReply(`Could not send to this channel — the bot may be missing Send Messages or Embed Links permission here. (${err.message})`);
     }
