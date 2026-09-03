@@ -2,7 +2,11 @@ import { SlashCommandBuilder } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
 import { getDb } from '../firebase.js';
 import { listThreadsByMode } from '../services/threads.js';
-import { threadFollowsGuidelines, sendGuidelinesNudge } from '../services/guidelinesNudge.js';
+import {
+  threadFollowsGuidelines,
+  sendGuidelinesNudge,
+  isGuidelinesExempt,
+} from '../services/guidelinesNudge.js';
 
 const MAX_NUDGES_PER_RUN = 100;
 const SEND_DELAY_MS = 2000;
@@ -105,6 +109,19 @@ async function handleScan(interaction) {
     }
     if (!thread) continue;
     if (thread.archived && !includeArchived) continue;
+
+    // Threads carrying an excluded tag (e.g. "just sharing") never get the guidelines
+    // nudge — same rule the scheduled check applies, enforced here too so a batch run
+    // can't sweep them up.
+    try {
+      if (await isGuidelinesExempt(thread)) continue;
+    } catch (err) {
+      console.error(
+        `[nudgequestions] tag check failed for thread ${doc.threadId}:`,
+        err.message,
+      );
+      continue;
+    }
 
     let passes;
     try {

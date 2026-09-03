@@ -62,6 +62,12 @@ export const config = {
 
   excludedTagNames: parseIdList(process.env.EXCLUDED_TAG_NAMES || 'just-sharing'),
 
+  // Forum tags excluded by raw id rather than by name. Matching on id survives the tag
+  // being renamed in Discord and needs no parent-forum lookup, so it holds even when the
+  // thread's parent isn't cached. Default is the server's "just sharing"-style tag that
+  // must never draw a posting-guidelines nudge.
+  excludedTagIds: parseIdList(process.env.EXCLUDED_TAG_IDS || '1545025922355298374'),
+
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',
 
   // Sync slash commands to the guild on boot, so deploying new commands needs no manual
@@ -128,6 +134,9 @@ export const config = {
     (process.env.SCREENSHOT_NUDGE_ENABLED || 'true').toLowerCase() !== 'false',
   screenshotNudgeDelayMinutes: intOr(process.env.SCREENSHOT_NUDGE_DELAY_MINUTES, 10),
 
+  // Posting-guidelines nudge. Shares one delayed check (and one posted message) with the
+  // screenshot nudge above: see services/postNudge.js. Threads carrying an excluded tag
+  // (EXCLUDED_TAG_NAMES / EXCLUDED_TAG_IDS) never get the guidelines half.
   guidelinesNudgeEnabled:
     (process.env.GUIDELINES_NUDGE_ENABLED || 'true').toLowerCase() !== 'false',
   guidelinesNudgeDelayMinutes: intOr(process.env.GUIDELINES_NUDGE_DELAY_MINUTES, 10),

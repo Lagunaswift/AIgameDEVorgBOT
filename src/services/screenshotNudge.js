@@ -1,5 +1,10 @@
 // Screenshot nudge: a friendly one-time reminder for showcase threads that have no image.
 //
+// The scheduled check no longer lives here. Screenshots and posting guidelines are
+// evaluated together and delivered as ONE message by services/postNudge.js, so a poster
+// missing both never gets two nudges back to back. This module owns the photo half: the
+// image-presence rule, its share of the message, and the dedup doc.
+//
 // Image-presence rule (shared with /nudgescreenshots): a thread "has a screenshot" when
 // EITHER its starter message has an image attachment, OR any of the first 50 messages
 // fetched after the starter that were authored by the thread owner has one. Dedup is
@@ -27,7 +32,7 @@ function messageHasImage(message) {
   return false;
 }
 
-function dedupRef(threadId) {
+export function screenshotDedupRef(threadId) {
   return getDb().collection('screenshotNudges').doc(threadId);
 }
 
@@ -61,6 +66,23 @@ export async function threadHasScreenshot(thread) {
   return ownerMessages.some((m) => messageHasImage(m));
 }
 
+// The photo ask. `lead` differs by context: on its own it opens the sentence, and in the
+// combined message (services/postNudge.js) it follows the guidelines ask, so it reads as
+// an addition rather than a second opening.
+export function buildScreenshotBody({ standalone = true } = {}) {
+  const lead = standalone
+    ? 'Please add a photo to the original post'
+    : 'And please add a photo to the original post';
+  return (
+    `${lead} — threads with an image get way more eyes and feedback. ` +
+    'Landscape shots work best, and actual gameplay beats a logo or title screen every time.'
+  );
+}
+
+export function buildScreenshotMessage(ownerId) {
+  return `Hey <@${ownerId}>, nice post! ${buildScreenshotBody()}`;
+}
+
 // Sends the nudge once, guarded by the Firestore dedup doc. Returns true if a nudge was
 // sent, false if it was skipped (dedup hit, or the thread is archived and the caller did
 // not opt in). Send failures propagate so callers can decide how to handle them.
@@ -82,7 +104,7 @@ export async function sendScreenshotNudge(thread, ownerId, { allowArchived = fal
     if (!fresh || fresh.archived) return false;
   }
 
-  const ref = dedupRef(thread.id);
+  const ref = screenshotDedupRef(thread.id);
   try {
     await ref.create({
       threadId: thread.id,
@@ -93,13 +115,8 @@ export async function sendScreenshotNudge(thread, ownerId, { allowArchived = fal
     return false; // doc already exists: someone else nudged first
   }
 
-  const message =
-    `Hey <@${ownerId}>, nice post! Threads with an image get way more eyes and feedback. ` +
-    `Add a screenshot or a short gameplay GIF to your first message. Landscape shots work ` +
-    `best, and actual gameplay beats a logo or title screen every time.`;
-
   try {
-    await thread.send({ content: message });
+    await thread.send({ content: buildScreenshotMessage(ownerId) });
   } catch (err) {
     // Roll back the claim so a later retry is possible; then let the caller see the error.
     try {
@@ -109,34 +126,4 @@ export async function sendScreenshotNudge(thread, ownerId, { allowArchived = fal
   }
 
   return true;
-}
-
-// Fire-and-forget timer: after delayMs, re-check the thread and nudge only if it still
-// has no screenshot. Never throws (a bot restart during the window is acceptably covered
-// by the /nudgescreenshots mod command as a backfill).
-export function scheduleNudgeCheck(thread, delayMs) {
-  const threadId = thread.id;
-  const client = thread.client;
-
-  setTimeout(async () => {
-    try {
-      let fresh;
-      try {
-        fresh = await client.channels.fetch(threadId);
-      } catch {
-        return; // deleted
-      }
-      if (!fresh || fresh.archived) return; // deleted or archived: bail silently
-
-      const ownerId = fresh.ownerId || thread.ownerId;
-      if (!ownerId) return;
-
-      const hasScreenshot = await threadHasScreenshot(fresh);
-      if (!hasScreenshot) {
-        await sendScreenshotNudge(fresh, ownerId);
-      }
-    } catch (err) {
-      console.warn(`[screenshotNudge] scheduled check failed for thread ${threadId}:`, err.message);
-    }
-  }, delayMs);
 }

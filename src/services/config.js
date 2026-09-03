@@ -36,6 +36,7 @@ export function buildEffectiveConfig(docData) {
     modFeedChannelId: d.modFeedChannelId ?? envConfig.modFeedChannelId,
     milestoneChannelId: d.milestoneChannelId ?? envConfig.milestoneChannelId,
     excludedTagNames: d.excludedTagNames ?? envConfig.excludedTagNames,
+    excludedTagIds: d.excludedTagIds ?? envConfig.excludedTagIds,
     rewardThresholds: d.rewardThresholds ?? envConfig.rewardThresholds,
     milestoneThresholds: d.milestoneThresholds ?? envConfig.milestoneThresholds,
     dailyDigestChannelId: d.dailyDigestChannelId ?? envConfig.dailyDigestChannelId,

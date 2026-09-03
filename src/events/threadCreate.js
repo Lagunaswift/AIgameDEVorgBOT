@@ -2,8 +2,10 @@ import { Events, EmbedBuilder } from 'discord.js';
 import { config } from '../config.js';
 import { modeForForum, getEffectiveConfig } from '../services/config.js';
 import { registerThread } from '../services/threads.js';
-import { scheduleNudgeCheck } from '../services/screenshotNudge.js';
-import { scheduleGuidelinesCheck } from '../services/guidelinesNudge.js';
+import {
+  schedulePostNudgeCheck,
+  combinedNudgeDelayMinutes,
+} from '../services/postNudge.js';
 import { maybeSendHelpfulHintForThread } from '../services/helpfulHint.js';
 
 export const name = Events.ThreadCreate;
@@ -28,11 +30,11 @@ export async function execute(thread, newlyCreated) {
       }
       await notifyModFeed(thread, data, mode);
 
-      if (mode === 'showcase' && config.screenshotNudgeEnabled) {
-        scheduleNudgeCheck(thread, config.screenshotNudgeDelayMinutes * 60000);
-      }
-      if (mode === 'showcase' && config.guidelinesNudgeEnabled) {
-        scheduleGuidelinesCheck(thread, config.guidelinesNudgeDelayMinutes * 60000);
+      // One timer covers both the guidelines and the photo ask, so a thread missing
+      // both gets a single message instead of two in a row.
+      const nudgeDelayMinutes = combinedNudgeDelayMinutes(config);
+      if (mode === 'showcase' && nudgeDelayMinutes !== null) {
+        schedulePostNudgeCheck(thread, nudgeDelayMinutes * 60000);
       }
     }
   } catch (err) {

@@ -1,19 +1,18 @@
+// Posting-guidelines nudge: a one-time reminder for showcase threads whose starter
+// message neither follows a /posttemplate structure nor asks a specific question.
+//
+// The scheduled check no longer lives here. Guidelines and screenshots are evaluated
+// together and delivered as ONE message by services/postNudge.js, so a poster missing
+// both never gets two nudges back to back. This module owns the guidelines half: the
+// pass/fail rule, the tag exclusion, its share of the message, and the dedup doc
+// (`guidelinesNudges`, doc id = threadId) that /nudgequestions also writes.
+
 import { getDb, serverTimestamp } from '../firebase.js';
 import { getEffectiveConfig } from './config.js';
+import { threadHasExcludedTag } from '../lib/tags.js';
 
-function dedupRef(threadId) {
+export function guidelinesDedupRef(threadId) {
   return getDb().collection('guidelinesNudges').doc(threadId);
-}
-
-function hasExcludedTag(thread, excludedNames) {
-  if (!excludedNames.length) return false;
-  if (!thread.appliedTags?.length) return false;
-  const parent = thread.parent;
-  if (!parent?.availableTags) return false;
-  const excludedIds = parent.availableTags
-    .filter((t) => excludedNames.includes(t.name.toLowerCase()))
-    .map((t) => t.id);
-  return thread.appliedTags.some((id) => excludedIds.includes(id));
 }
 
 const TEMPLATE_HEADERS = [
@@ -25,6 +24,16 @@ const TEMPLATE_HEADERS = [
   '**what i\'m building:**',
   '**what changed:**',
 ];
+
+// True when the thread carries a tag that opts it out of the guidelines nudge (for
+// example "just sharing" posts, which aren't asking for feedback at all).
+export async function isGuidelinesExempt(thread) {
+  const cfg = await getEffectiveConfig();
+  return threadHasExcludedTag(thread, {
+    names: cfg.excludedTagNames || [],
+    ids: cfg.excludedTagIds || [],
+  });
+}
 
 export async function threadFollowsGuidelines(thread) {
   let starter = null;
@@ -44,6 +53,19 @@ export async function threadFollowsGuidelines(thread) {
   return questions >= 1;
 }
 
+// The guidelines ask, split from its closing warning so the photo ask (see
+// screenshotNudge.js) can sit between them in the combined message.
+export const GUIDELINES_BODY =
+  'Per the guidelines, please add 1-2 specific questions when looking for feedback. ' +
+  'Also let us know how long you expect people to be playing for.';
+
+export const GUIDELINES_WARNING =
+  "Post will be deleted in 12 hours if you don't!";
+
+export function buildGuidelinesMessage(ownerId) {
+  return `Hey <@${ownerId}>! ${GUIDELINES_BODY} ${GUIDELINES_WARNING}`;
+}
+
 export async function sendGuidelinesNudge(thread, ownerId, { allowArchived = false } = {}) {
   if (!allowArchived) {
     let fresh = thread;
@@ -55,7 +77,7 @@ export async function sendGuidelinesNudge(thread, ownerId, { allowArchived = fal
     if (!fresh || fresh.archived) return false;
   }
 
-  const ref = dedupRef(thread.id);
+  const ref = guidelinesDedupRef(thread.id);
   try {
     await ref.create({
       threadId: thread.id,
@@ -66,48 +88,12 @@ export async function sendGuidelinesNudge(thread, ownerId, { allowArchived = fal
     return false;
   }
 
-  const message =
-    `Hey <@${ownerId}>! Per the guidelines, please add 1-2 specific questions when looking ` +
-    `for feedback. Also let us know how long you expect people to be playing for. ` +
-    `Post will be deleted in 12 hours if you don't!`;
-
   try {
-    await thread.send({ content: message });
+    await thread.send({ content: buildGuidelinesMessage(ownerId) });
   } catch (err) {
     try { await ref.delete(); } catch {}
     throw err;
   }
 
   return true;
-}
-
-export function scheduleGuidelinesCheck(thread, delayMs) {
-  const threadId = thread.id;
-  const client = thread.client;
-
-  setTimeout(async () => {
-    try {
-      let fresh;
-      try {
-        fresh = await client.channels.fetch(threadId);
-      } catch {
-        return;
-      }
-      if (!fresh || fresh.archived) return;
-
-      const cfg = await getEffectiveConfig();
-      const excludedNames = (cfg.excludedTagNames || []).map((n) => n.toLowerCase());
-      if (hasExcludedTag(fresh, excludedNames)) return;
-
-      const ownerId = fresh.ownerId || thread.ownerId;
-      if (!ownerId) return;
-
-      const passes = await threadFollowsGuidelines(fresh);
-      if (!passes) {
-        await sendGuidelinesNudge(fresh, ownerId);
-      }
-    } catch (err) {
-      console.warn(`[guidelinesNudge] scheduled check failed for thread ${threadId}:`, err.message);
-    }
-  }, delayMs);
 }
