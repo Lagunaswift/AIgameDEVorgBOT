@@ -89,6 +89,8 @@ export function validateShowcaseSnapshot(candidate, previous, report = { version
     if (!Number.isInteger(game.feedbackPoints) || game.feedbackPoints < 0) {
       throw new Error(`candidate game ${game.id} has an invalid feedbackPoints count`);
     }
+    // v2 retains this legacy no-recognised-feedback marker for compatibility; it is derived
+    // from feedbackPoints and must not be interpreted as current feedback intent or Test/Play state.
     if (typeof game.needsFeedback !== 'boolean' || game.needsFeedback !== (game.feedbackPoints === 0)) {
       throw new Error(`candidate game ${game.id} has inconsistent needsFeedback`);
     }

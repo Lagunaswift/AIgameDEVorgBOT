@@ -31,7 +31,6 @@ const templates = {
 **What did not:**
 **What’s next:**
 **Feedback wanted:** Yes / No
-**Site publication opt-in:** No (default)
 `,
 };
 

@@ -74,7 +74,7 @@ test('a populated v1 snapshot cannot lose a project without a withheld record', 
   }));
 });
 
-test('public game contract derives kind and feedback state from structured metadata', () => {
+test('public game contract derives kind and legacy no-recognised-feedback marker from structured metadata', () => {
   const jamEntry = buildPublicGame({
     ...game('12345678901234567', { feedbackPoints: 2, needsFeedback: false }),
     author: 'Maker',
@@ -95,10 +95,11 @@ test('public game contract derives kind and feedback state from structured metad
 
   const project = buildPublicGame({ ...jamEntry, jamId: null, feedbackPoints: 0, projectUrl: null });
   assert.equal(project.kind, 'project');
+  // needsFeedback is a legacy compatibility marker derived from feedbackPoints, not intent.
   assert.equal(project.needsFeedback, true);
 });
 
-test('snapshot rejects inconsistent jam and feedback semantics', () => {
+test('snapshot rejects inconsistent jam and legacy feedback-marker semantics', () => {
   assert.throws(
     () => validateShowcaseSnapshot(snapshot([game('12345678901234567', { kind: 'jam-entry' })]), null),
     /inconsistent kind and jamId/,

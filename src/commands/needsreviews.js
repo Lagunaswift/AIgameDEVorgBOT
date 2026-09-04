@@ -1,30 +1,12 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { listThreadsByMode } from '../services/threads.js';
-import { getEffectiveConfig } from '../services/config.js';
 
 export const data = new SlashCommandBuilder()
   .setName('needsreviews')
   .setDescription('Show showcase posts that need feedback (fewest comments first).');
 
-function hasExcludedTag(channel, excludedNames) {
-  if (!excludedNames.length) return false;
-  if (!channel.appliedTags?.length) return false;
-
-  const parent = channel.parent;
-  if (!parent?.availableTags) return false;
-
-  const excludedIds = parent.availableTags
-    .filter((t) => excludedNames.includes(t.name.toLowerCase()))
-    .map((t) => t.id);
-
-  return channel.appliedTags.some((id) => excludedIds.includes(id));
-}
-
 export async function execute(interaction) {
   await interaction.deferReply({ ephemeral: true });
-
-  const cfg = await getEffectiveConfig();
-  const excludedNames = (cfg.excludedTagNames || []).map((n) => n.toLowerCase());
 
   const threads = await listThreadsByMode('showcase');
   if (threads.length === 0) {
@@ -37,8 +19,6 @@ export async function execute(interaction) {
     try {
       const channel = await interaction.client.channels.fetch(t.threadId);
       if (!channel) continue;
-
-      if (hasExcludedTag(channel, excludedNames)) continue;
 
       const total = channel.messageCount ?? channel.totalMessageSent ?? 0;
       const comments = Math.max(0, total - 1);

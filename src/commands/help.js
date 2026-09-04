@@ -4,7 +4,7 @@ const COMMUNITY_COMMANDS = [
   ['`/mystats`', 'See your feedback points, weekly count, and rank.'],
   ['`/leaderboard`', 'View the feedback leaderboard (weekly or all-time).'],
   ['`/needsreviews`', 'Find showcase posts that need more feedback.'],
-  ['`/projecturl`', 'Set the public play/test link on your showcase thread.'],
+  ['`/projecturl`', 'Owner: save playable URL metadata on the current registered thread; it does not publish.'],
   ['`/posttemplate`', 'Get a copyable template for build-help, playtest, or update posts.'],
   ['`/gameidea`', 'Byte generates a random game idea. Comical, occasionally good.'],
   ['`/help`', 'This command. Shows what every command does.'],

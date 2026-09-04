@@ -9,5 +9,6 @@ test('helpful hint explains feedback, playable links, and opt-in publishing', ()
   assert.match(message, /\/projecturl/);
   assert.match(message, /Publish to site/);
   assert.match(message, /stays in Discord/);
+  assert.match(message, /does not publish or create a Project\/page/);
   assert.doesNotMatch(message, /\b(?:\d{15,})\b/);
 });

@@ -19,9 +19,9 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('projecturl')
-      .setDescription('Set the public project link for this thread.')
+      .setDescription('Owner: save playable URL metadata for this registered thread.')
       .addStringOption((option) =>
-        option.setName('url').setDescription('An http(s) project URL').setRequired(true),
+        option.setName('url').setDescription('An http(s) playable project URL').setRequired(true),
       ),
 
     async execute(interaction) {
@@ -38,14 +38,17 @@ export const commands = [
       if (!thread) return;
       if (thread.ownerId !== interaction.user.id) {
         await interaction.reply({
-          content: 'Only this thread’s owner can set its project URL.',
+          content: 'Only this registered thread’s owner can set its playable URL.',
           ephemeral: true,
         });
         return;
       }
 
       await setThreadProjectUrl(thread.threadId, projectUrl);
-      await interaction.reply({ content: 'Project URL saved for this thread.', ephemeral: true });
+      await interaction.reply({
+        content: 'Playable URL metadata saved for this registered thread. This does not publish or create a Project/page; only the **Publish to site** tag controls site publication.',
+        ephemeral: true,
+      });
     },
   },
   {

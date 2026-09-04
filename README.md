@@ -131,6 +131,7 @@ mad-lib tally. Nothing user-identifying is stored.
 | `/leaderboard [scope]` | everyone | Top 10 by points. `scope` = `week` (default) or `all`. |
 | `/mystats` | everyone | Your total points, weekly points, and weekly rank. |
 | `/needsreviews` | everyone | Showcase threads with the fewest comments — where reviewers should go. |
+| `/projecturl <url>` | current thread owner | Save playable URL metadata for the current registered thread. This does not publish or create a Project/page; only the **Publish to site** tag controls site publication. |
 | `/rescan` | mod | Backfill registration + points from watched forums (downtime recovery). |
 | `/points adjust <user> <amount> <reason>` | mod | Manual point override; writes an audit doc. |
 | `/registerforum <channel> <mode>` | mod | Add a forum to the watched list with a mode. |

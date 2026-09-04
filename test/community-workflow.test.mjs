@@ -25,8 +25,8 @@ test('post templates contain the required community workflow fields', () => {
   const update = buildPostTemplate('project_update');
   for (const field of [
     'What changed', 'What worked', 'What did not', 'What’s next', 'Feedback wanted', 'Yes / No',
-    'Site publication opt-in', 'No (default)',
   ]) assert.match(update, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(update, /Site publication opt-in|No \(default\)/);
 });
 
 test('post template rejects unsupported types', () => {

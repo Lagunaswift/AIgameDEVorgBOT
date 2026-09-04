@@ -37,7 +37,8 @@ export function buildPublicGame({
     kind: normalizedJamId ? 'jam-entry' : 'project',
     jamId: normalizedJamId,
     projectUrl: normalizedProjectUrl,
-    // Helpful feedback is represented by recognised point records, not raw comment count.
+    // Legacy compatibility marker: derived solely from recognised feedbackPoints, not current
+    // feedback intent. It is not used for Test/Play decisions.
     needsFeedback: feedbackPoints === 0,
     publish: true,
   };

@@ -33,8 +33,9 @@ export function buildHelpfulHintMessage({ emoji, threadName, welcome = false }) 
 
   return `${opening}\n\n` +
     `One-time tip: when feedback genuinely helps you, react to that comment with ${emoji} ` +
-    `and the commenter earns a feedback point. Use **/projecturl** to add a playable link ` +
-    `to your project. Public site listing is opt-in: apply the community's **Publish to site** ` +
+    `and the commenter earns a feedback point. As the thread owner, use **/projecturl** in ` +
+    `this registered thread to save playable URL metadata; it does not publish or create a ` +
+    `Project/page. Public site listing is controlled only by the community's **Publish to site** ` +
     `forum tag. Without that tag, your project stays in Discord.`;
 }
 

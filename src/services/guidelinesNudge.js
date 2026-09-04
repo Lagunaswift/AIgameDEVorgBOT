@@ -1,19 +1,7 @@
 import { getDb, serverTimestamp } from '../firebase.js';
-import { getEffectiveConfig } from './config.js';
 
 function dedupRef(threadId) {
   return getDb().collection('guidelinesNudges').doc(threadId);
-}
-
-function hasExcludedTag(thread, excludedNames) {
-  if (!excludedNames.length) return false;
-  if (!thread.appliedTags?.length) return false;
-  const parent = thread.parent;
-  if (!parent?.availableTags) return false;
-  const excludedIds = parent.availableTags
-    .filter((t) => excludedNames.includes(t.name.toLowerCase()))
-    .map((t) => t.id);
-  return thread.appliedTags.some((id) => excludedIds.includes(id));
 }
 
 const TEMPLATE_HEADERS = [
@@ -94,10 +82,6 @@ export function scheduleGuidelinesCheck(thread, delayMs) {
         return;
       }
       if (!fresh || fresh.archived) return;
-
-      const cfg = await getEffectiveConfig();
-      const excludedNames = (cfg.excludedTagNames || []).map((n) => n.toLowerCase());
-      if (hasExcludedTag(fresh, excludedNames)) return;
 
       const ownerId = fresh.ownerId || thread.ownerId;
       if (!ownerId) return;

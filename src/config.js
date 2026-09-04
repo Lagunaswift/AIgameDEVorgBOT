@@ -60,8 +60,6 @@ export const config = {
   // assigned; rewards are handed out by hand after a mod reaches out.
   milestoneThresholds: parseIdList(process.env.MILESTONE_THRESHOLDS || '10,20,40').map(Number),
 
-  excludedTagNames: parseIdList(process.env.EXCLUDED_TAG_NAMES || 'just-sharing'),
-
   weeklyPostEnabled: (process.env.WEEKLY_POST_ENABLED || 'true').toLowerCase() !== 'false',
 
   // Sync slash commands to the guild on boot, so deploying new commands needs no manual
