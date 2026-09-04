@@ -6,3 +6,4 @@ npm-debug.log*
 serviceAccount.json
 service-account*.json
 .DS_Store
+.migration/

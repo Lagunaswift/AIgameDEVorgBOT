@@ -22,6 +22,15 @@ import {
   removeStaleAssets,
 } from './site-export-safety.mjs';
 import { buildPublicGame } from './site-export-contract.mjs';
+import {
+  checkShowcaseEligibility,
+  extractText,
+  getChannel,
+  getForumTagMap,
+  getStarterMessage,
+  isMissingResource,
+  truncate,
+} from './site-export-shared.mjs';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 const CONTENT_TYPE_EXT = {
@@ -88,38 +97,8 @@ function validateEnv(args) {
 }
 
 // ---------- text extraction ----------
-
-// Strips the markdown constructs called out in the data contract: custom emoji tags,
-// link syntax (kept as its label), bold/italic/underline/strikethrough/code markers.
-// Longest markers are stripped first so triple/double sequences don't leave stray chars.
-function stripMarkdown(input) {
-  if (!input) return '';
-  let text = String(input);
-  text = text.replace(/<a?:([A-Za-z0-9_]+):\d+>/g, ':$1:');
-  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
-  text = text.replace(/~~/g, '');
-  text = text.replace(/```/g, '');
-  text = text.replace(/``/g, '');
-  text = text.replace(/`/g, '');
-  text = text.replace(/\*\*\*/g, '');
-  text = text.replace(/\*\*/g, '');
-  text = text.replace(/__/g, '');
-  text = text.replace(/\*/g, '');
-  text = text.replace(/\s+/g, ' ').trim();
-  return text;
-}
-
-function truncate(text, max) {
-  if (!text) return text;
-  if (text.length <= max) return text;
-  return text.slice(0, max).trim();
-}
-
-function extractText(message, max) {
-  if (!message) return null;
-  const cleaned = truncate(stripMarkdown(message.content || ''), max);
-  return cleaned || null;
-}
+// stripMarkdown / truncate / extractText live in site-export-shared.mjs, shared with
+// the Phase 3 project migration so both tools normalise public text identically.
 
 // ---------- image attachment handling ----------
 
@@ -193,27 +172,7 @@ async function downloadOptimizedAttachment(url, destDir, baseName, fallbackExt) 
 }
 
 // ---------- Discord REST helpers ----------
-
-function isMissingResource(err) {
-  if (!err) return false;
-  if (err.status === 404 || err.status === 403) return true;
-  if (err.code === 10003 || err.code === 10004) return true;
-  return false;
-}
-
-async function getChannel(rest, id) {
-  return rest.get(`/channels/${id}`);
-}
-
-async function getStarterMessage(rest, threadId) {
-  // In a forum thread the starter message id equals the thread id.
-  try {
-    return await rest.get(`/channels/${threadId}/messages/${threadId}`);
-  } catch (err) {
-    if (isMissingResource(err)) return null;
-    throw err;
-  }
-}
+// getChannel / getStarterMessage / isMissingResource live in site-export-shared.mjs.
 
 // Fallback for threads whose starter message has no image: scan up to the first 50
 // messages after the starter (a single 100-message page, per the shared image-presence
@@ -250,22 +209,8 @@ async function findOwnerFallbackImage(rest, threadId, ownerId) {
   return null;
 }
 
-async function getForumTagMap(rest, forumId, cache) {
-  if (cache.has(forumId)) return cache.get(forumId);
-  const map = new Map();
-  const forum = await getChannel(rest, forumId);
-  if (!Array.isArray(forum.available_tags)) {
-    throw new Error(`forum ${forumId} did not return available_tags`);
-  }
-  for (const tag of forum.available_tags) {
-    if (!tag || !tag.id || !tag.name) {
-      throw new Error(`forum ${forumId} returned a malformed tag`);
-    }
-    map.set(tag.id, { name: tag.name, emojiId: tag.emoji_id || null, emojiName: tag.emoji_name || null });
-  }
-  cache.set(forumId, map);
-  return map;
-}
+// getForumTagMap lives in site-export-shared.mjs (also used by the Phase 3 migration
+// to resolve applied tag ids into the tag names platform extraction runs against).
 
 // ---------- placement awards ----------
 
@@ -369,20 +314,27 @@ async function processShowcaseThread(docSnap, ctx) {
     }
     throw err;
   }
-  const forumId = channel.parent_id || null;
-  if (!forumId || forumId !== data.forumId || !sourceForumIds.has(forumId)) {
+
+  // The eligibility decision itself is shared with the Phase 3 migration
+  // (site-export-shared.mjs); only the reporting is exporter-specific.
+  const eligibility = checkShowcaseEligibility({
+    channel,
+    firestoreData: data,
+    sourceForumIds,
+    publishTagId,
+  });
+  if (eligibility.status === 'uncertain-forum') {
+    const forumId = channel.parent_id || null;
     console.warn(`[export] warn: thread ${threadId} has an uncertain source forum (${forumId}), skipping`);
     withheldIds.add(threadId);
     return null;
   }
-  if (!Array.isArray(channel.applied_tags)) {
+  if (eligibility.status === 'no-applied-tags') {
     console.warn(`[export] warn: thread ${threadId} did not return applied_tags, skipping`);
     withheldIds.add(threadId);
     return null;
   }
-
-  // This is the publication boundary: untagged threads never have their text or assets read.
-  if (!channel.applied_tags.includes(publishTagId)) {
+  if (eligibility.status === 'not-published') {
     withheldIds.add(threadId);
     return null;
   }

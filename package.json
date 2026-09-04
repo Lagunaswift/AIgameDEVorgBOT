@@ -9,6 +9,7 @@
     "register": "node src/register-commands.js",
     "dev": "node --watch src/index.js",
     "export:site": "node scripts/export-site-data.mjs --jams-forum 1539971669467332728",
+    "migrate:projects": "node scripts/migrate-projects.mjs",
     "test": "node --test test/*.test.mjs",
     "validate:site-export": "node scripts/validate-site-export.mjs"
   },

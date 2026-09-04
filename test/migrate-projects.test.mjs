@@ -1,0 +1,557 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import {
+  applyMigrationRecordTransaction,
+  buildMigrationProjectRecord,
+  deriveProjectStatus,
+  planMigration,
+  platformsFromTagNames,
+  resolveSlug,
+  slugifyBase,
+} from '../src/services/migration.js';
+import {
+  applyPlan,
+  consentStillActive,
+  diffPlans,
+  reconcileBaseline,
+} from '../scripts/migrate-projects.mjs';
+
+const OWNER = '123456789012345678';
+const OTHER = '234567890123456789';
+const THREAD_A = '345678901234567890';
+const THREAD_B = '456789012345678901';
+const FORUM = '1051088980176805920';
+const PUBLISH_TAG = '1537600958245249154';
+
+// Simulates a real structured status source (the registry production uses is empty
+// until a genuine source exists — these tests must not rely on that gate being open).
+const TEST_STATUS_SOURCES = [{ name: 'test-structured-status', read: (thread) => thread.__testStatus ?? null }];
+
+const DEFAULT_THREAD = {
+  threadId: THREAD_A, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
+  projectId: null, purpose: null, __testStatus: 'development',
+};
+
+function candidate(overrides = {}) {
+  return {
+    threadId: THREAD_A,
+    thread: { ...DEFAULT_THREAD },
+    eligibility: { status: 'ok', forumId: FORUM, consentTag: true, ownerSource: 'thread.ownerId', jamThreadId: null },
+    title: 'Rhythm Of The Streets',
+    summary: 'A rhythm game with tactical AI commands.',
+    ownerId: OWNER,
+    projectUrl: null,
+    projectUrlInvalid: false,
+    platforms: ['web'],
+    unknownTags: ['meets guidelines'],
+    extraBlockers: [],
+    ...overrides,
+    thread: {
+      ...DEFAULT_THREAD,
+      ...(overrides.threadId != null ? { threadId: overrides.threadId } : {}),
+      ...(overrides.thread || {}),
+    },
+  };
+}
+
+function existingProject(overrides = {}) {
+  return {
+    projectId: 'existing-project-1',
+    ownerId: OWNER,
+    title: 'Existing Game',
+    slug: 'existing-game',
+    summary: 'Existing summary.',
+    status: 'development',
+    projectUrl: null,
+    platforms: [],
+    publishToSite: true,
+    profileThreadId: THREAD_A,
+    createdAt: 'then',
+    updatedAt: 'then',
+    ...overrides,
+  };
+}
+
+function plan({ candidates, existingProjects = [], allocateProjectId } = {}) {
+  let seq = 0;
+  return planMigration({
+    candidates,
+    existingProjects,
+    allocateProjectId: allocateProjectId || (() => `allocated-${++seq}`),
+    statusSources: TEST_STATUS_SOURCES,
+  });
+}
+
+function byThread(planned, threadId) {
+  return planned.records.find((r) => r.threadId === threadId);
+}
+
+// ---------- slug derivation ----------
+
+test('slug derivation normalises unicode titles deterministically', () => {
+  assert.equal(slugifyBase('Chronicles of Terros'), 'chronicles-of-terros');
+  assert.equal(slugifyBase('  Café—Rhythm!!  '), 'cafe-rhythm');
+  assert.equal(slugifyBase('Префектура'), ''); // fully non-latin → empty base
+  assert.equal(slugifyBase('a'.repeat(150)).length, 100);
+  assert.equal(slugifyBase(null), '');
+});
+
+test('slug resolution uses base, projectId suffix on collision, and blocks unresolvable ones', () => {
+  assert.equal(resolveSlug({ base: 'new-game', projectId: 'ABC123', taken: new Set(['other']) }), 'new-game');
+  assert.equal(resolveSlug({ base: 'new-game', projectId: 'ABC123', taken: new Set(['new-game']) }), 'new-game-abc123');
+  // Base longer than the suffix budget is truncated so the total stays within 100.
+  const long = resolveSlug({ base: 'a'.repeat(150), projectId: 'abc123', taken: new Set(['a'.repeat(100)]) });
+  assert.equal(long.length, 100);
+  assert.match(long, /-abc123$/);
+  assert.equal(resolveSlug({ base: '', projectId: 'ABC123', taken: new Set() }), 'project-abc123');
+  // Even the suffixed candidate is occupied → unresolvable, caller blocks.
+  assert.equal(resolveSlug({ base: 'game', projectId: 'abc', taken: new Set(['game', 'game-abc']) }), null);
+});
+
+// ---------- platforms ----------
+
+test('platform extraction accepts exact enum names only and reports unknown tags', () => {
+  assert.deepEqual(
+    platformsFromTagNames(['iOS', ' macOS ', 'web', 'web', 'Publish to site', 'meets guidelines', '< 5 mins']),
+    { platforms: ['web', 'macos', 'ios'], ignored: ['Publish to site', 'meets guidelines', '< 5 mins'] },
+  );
+  assert.deepEqual(platformsFromTagNames([]), { platforms: [], ignored: [] });
+  assert.deepEqual(platformsFromTagNames(null), { platforms: [], ignored: [] });
+  // Unknown tags are never coerced to "other".
+  assert.deepEqual(platformsFromTagNames(['console']), { platforms: [], ignored: ['console'] });
+});
+
+// ---------- status gate ----------
+
+test('status gate fails closed without an explicit structured source', () => {
+  assert.deepEqual(deriveProjectStatus({}), { status: null, source: 'none' });
+  const ambiguous = deriveProjectStatus({}, [
+    { name: 'a', read: () => 'released' },
+    { name: 'b', read: () => 'playable' },
+  ]);
+  assert.equal(ambiguous.status, null);
+  assert.equal(ambiguous.source, 'ambiguous');
+  assert.equal(deriveProjectStatus({}, [{ name: 'a', read: (t) => t.s ?? null }]).status, null);
+
+  const planned = planMigration({ candidates: [candidate()], existingProjects: [] });
+  const record = planned.records[0];
+  assert.equal(record.disposition, 'blocked');
+  assert.deepEqual(record.blockers, [{
+    field: 'status',
+    reason: 'no explicit structured status source exists',
+    provenance: 'thread schema/Discord tags/export contract',
+  }]);
+});
+
+// ---------- record construction ----------
+
+test('migration record carries explicit consent and profile thread, validated like Phase 2', () => {
+  const record = buildMigrationProjectRecord({
+    projectId: 'opaque-id', ownerId: OWNER, title: 'Test Game', slug: 'test-game',
+    summary: 'A game.', status: 'playable', projectUrl: 'https://example.com',
+    platforms: ['web', 'ios'], profileThreadId: THREAD_A, timestamp: 'now',
+  });
+  assert.equal(record.publishToSite, true);
+  assert.equal(record.profileThreadId, THREAD_A);
+  assert.equal(record.projectId, 'opaque-id');
+  assert.equal(record.createdAt, 'now');
+
+  assert.throws(() => buildMigrationProjectRecord({
+    projectId: 'x', ownerId: OWNER, title: 'T', slug: 't', summary: 's',
+    status: 'beta', projectUrl: null, platforms: [], profileThreadId: THREAD_A, timestamp: 'now',
+  }), /status must be one of/);
+  assert.throws(() => buildMigrationProjectRecord({
+    projectId: 'x', ownerId: OWNER, title: 'T', slug: 'Bad Slug', summary: 's',
+    status: 'paused', projectUrl: null, platforms: [], profileThreadId: null, timestamp: 'now',
+  }), /lowercase URL-safe/);
+  assert.throws(() => buildMigrationProjectRecord({
+    projectId: 'x', ownerId: OWNER, title: 'T', slug: 't', summary: 's',
+    status: 'paused', projectUrl: 'ftp://x', platforms: [], profileThreadId: null, timestamp: 'now',
+  }), /http\(s\)/);
+});
+
+// ---------- planning ----------
+
+test('clean candidates plan one Project each with deterministic identity and slugs', () => {
+  const planned = plan({
+    candidates: [candidate(), candidate({
+      threadId: THREAD_B, title: 'Blow for Blow',
+      thread: { ...candidate().thread, threadId: THREAD_B },
+    })],
+  });
+  assert.deepEqual(planned.counts, { create: 2, alreadyLinked: 0, blocked: 0, conflict: 0 });
+  const [a, b] = planned.records;
+  assert.equal(a.disposition, 'create');
+  assert.equal(a.slug, 'rhythm-of-the-streets');
+  assert.equal(a.metadata.profileThreadId, THREAD_A);
+  assert.equal(a.metadata.status, 'development');
+  assert.notEqual(a.plannedProjectId, b.plannedProjectId);
+  assert.equal(b.slug, 'blow-for-blow');
+});
+
+test('same-title threads resolve slug collisions with the opaque id suffix in stable thread order', () => {
+  const planned = plan({
+    candidates: [
+      candidate({ title: 'Same Title', threadId: THREAD_B, thread: { ...candidate().thread, threadId: THREAD_B } }),
+      candidate({ title: 'Same Title' }),
+    ],
+  });
+  const [first, second] = planned.records;
+  assert.equal(first.threadId, THREAD_A, 'planned in ascending snowflake order');
+  assert.equal(first.slug, 'same-title');
+  assert.equal(second.slug, `same-title-${'allocated-2'}`);
+  assert.equal(second.plannedProjectId, 'allocated-2');
+});
+
+test('existing slug occupancy forces the suffixed candidate or blocks', () => {
+  const planned = plan({
+    candidates: [candidate({ title: 'Existing Game' })],
+    existingProjects: [existingProject({ profileThreadId: null, slug: 'existing-game' })],
+  });
+  assert.equal(planned.records[0].slug, 'existing-game-allocated-1');
+});
+
+test('a consistent existing relationship is a rerun no-op; later edits survive', () => {
+  const linked = candidate({
+    thread: { ...candidate().thread, projectId: 'existing-project-1' },
+  });
+  const planned = plan({ candidates: [linked], existingProjects: [existingProject()] });
+  assert.equal(planned.counts.alreadyLinked, 1);
+  assert.equal(planned.counts.create, 0);
+});
+
+test('inconsistent existing relationships are reported conflicts, never repaired', () => {
+  const base = { ...candidate().thread, projectId: 'existing-project-1' };
+
+  const dangling = plan({ candidates: [candidate({ thread: base })], existingProjects: [] });
+  assert.equal(dangling.records[0].disposition, 'conflict');
+  assert.match(dangling.records[0].reason, /dangling/);
+
+  const noBacklink = plan({
+    candidates: [candidate({ thread: base })],
+    existingProjects: [existingProject({ profileThreadId: THREAD_B })],
+  });
+  assert.equal(noBacklink.records[0].disposition, 'conflict');
+  assert.match(noBacklink.records[0].reason, /does not point back/);
+
+  const ownerChanged = plan({
+    candidates: [candidate({ thread: base })],
+    existingProjects: [existingProject({ ownerId: OTHER })],
+  });
+  assert.equal(ownerChanged.records[0].disposition, 'conflict');
+  assert.match(ownerChanged.records[0].reason, /owner differs/);
+
+  const unpublished = plan({
+    candidates: [candidate({ thread: base })],
+    existingProjects: [existingProject({ publishToSite: false })],
+  });
+  assert.equal(unpublished.records[0].disposition, 'conflict');
+  assert.match(unpublished.records[0].reason, /never republishes/);
+
+  const claimedWithoutBacklink = plan({
+    candidates: [candidate()],
+    existingProjects: [existingProject({ profileThreadId: THREAD_A, projectId: 'other-project' })],
+  });
+  assert.equal(claimedWithoutBacklink.records[0].disposition, 'conflict');
+  assert.match(claimedWithoutBacklink.records[0].reason, /no backlink/);
+});
+
+test('missing or ambiguous metadata blocks records instead of inventing values', () => {
+  const cases = [
+    [{ title: null }, 'title', /missing/],
+    [{ title: '   ' }, 'title', /missing/],
+    [{ summary: null }, 'summary', /missing/],
+    [{ ownerId: null }, 'ownerId', /missing/],
+    [{ projectUrl: 'notaurl', projectUrlInvalid: true }, 'projectUrl', /invalid http/],
+    [{ extraBlockers: [{ field: 'ownerId', reason: 'registered owner differs from live Discord owner', provenance: 'x' }] }, 'ownerId', /differs from live Discord owner/],
+  ];
+  for (const [overrides, field, re] of cases) {
+    const planned = plan({ candidates: [candidate(overrides)] });
+    const record = planned.records[0];
+    assert.equal(record.disposition, 'blocked', `${field} should block`);
+    assert.equal(record.blockers[0].field, field);
+    assert.match(record.blockers[0].reason, re);
+  }
+  // No auto-defaults anywhere: every missing gate surfaces as its own blocker
+  // (status stays satisfied via the structured test source).
+  const multi = plan({ candidates: [candidate({ summary: null, ownerId: null })] });
+  assert.deepEqual(
+    multi.records[0].blockers.map((b) => b.field).sort(),
+    ['ownerId', 'summary'],
+  );
+});
+
+// ---------- transactional apply ----------
+
+function store({ thread = null, project = null } = {}) {
+  const data = new Map();
+  if (thread) data.set(`threads/${thread.threadId}`, { ...thread });
+  if (project) data.set(`projects/${project.projectId}`, { ...project });
+  const writes = [];
+  const ref = (kind, id) => ({ kind, id, key: `${kind}s/${id}` });
+  const transaction = {
+    async get(r) {
+      const value = data.get(r.key);
+      return value === undefined
+        ? { exists: false, data: () => undefined }
+        : { exists: true, data: () => value };
+    },
+    set(r, value) { writes.push({ op: 'set', key: r.key, value }); data.set(r.key, value); },
+    update(r, update) { writes.push({ op: 'update', key: r.key, update }); Object.assign(data.get(r.key), update); },
+  };
+  return { data, writes, transaction, ref };
+}
+
+function planRecord(overrides = {}) {
+  return {
+    threadId: THREAD_A,
+    disposition: 'create',
+    plannedProjectId: 'allocated-1',
+    slug: 'rhythm-of-the-streets',
+    metadata: {
+      ownerId: OWNER, title: 'Rhythm Of The Streets', slug: 'rhythm-of-the-streets',
+      summary: 'A rhythm game with tactical AI commands.', status: 'development',
+      projectUrl: null, platforms: ['web'], profileThreadId: THREAD_A,
+    },
+    ...overrides,
+  };
+}
+
+function threadDoc(overrides = {}) {
+  return {
+    threadId: THREAD_A, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
+    projectId: null, purpose: null, projectUrl: null,
+    createdAt: 'then', registeredAt: 'then',
+    ...overrides,
+  };
+}
+
+test('apply commits Project creation and thread backlink atomically, preserving all other fields', async () => {
+  const state = store({ thread: threadDoc() });
+  const record = planRecord();
+  const project = await applyMigrationRecordTransaction({
+    transaction: state.transaction,
+    threadRef: state.ref('thread', THREAD_A),
+    projectRef: state.ref('project', 'allocated-1'),
+    planRecord: record,
+    timestamp: 'now',
+  });
+  assert.equal(project.publishToSite, true);
+  assert.equal(project.profileThreadId, THREAD_A);
+
+  const thread = state.data.get(`threads/${THREAD_A}`);
+  assert.equal(thread.projectId, 'allocated-1');
+  assert.equal(thread.purpose, null, 'purpose preserved');
+  assert.equal(thread.projectUrl, null, 'projectUrl preserved');
+  assert.equal(thread.createdAt, 'then', 'scoring/registration identity preserved');
+
+  assert.deepEqual(state.writes.map((w) => w.op), ['set', 'update']);
+  assert.deepEqual(state.writes[1].update, { projectId: 'allocated-1' }, 'only the backlink is written');
+});
+
+test('apply fails closed on occupied ids, changed state, or vanished threads', async () => {
+  // Occupied planned id.
+  const occupied = store({ thread: threadDoc(), project: existingProject({ projectId: 'allocated-1' }) });
+  await assert.rejects(applyMigrationRecordTransaction({
+    transaction: occupied.transaction,
+    threadRef: occupied.ref('thread', THREAD_A),
+    projectRef: occupied.ref('project', 'allocated-1'),
+    planRecord: planRecord(), timestamp: 'now',
+  }), /already occupied/);
+  assert.equal(occupied.writes.length, 0);
+
+  // Thread vanished.
+  const vanished = store({});
+  await assert.rejects(applyMigrationRecordTransaction({
+    transaction: vanished.transaction,
+    threadRef: vanished.ref('thread', THREAD_A),
+    projectRef: vanished.ref('project', 'allocated-1'),
+    planRecord: planRecord(), timestamp: 'now',
+  }), /disappeared/);
+
+  // Thread already linked to a different project (duplicate/concurrent guard).
+  const linked = store({ thread: threadDoc({ projectId: 'someone-elses' }) });
+  await assert.rejects(applyMigrationRecordTransaction({
+    transaction: linked.transaction,
+    threadRef: linked.ref('thread', THREAD_A),
+    projectRef: linked.ref('project', 'allocated-1'),
+    planRecord: planRecord(), timestamp: 'now',
+  }), /already linked/);
+  assert.equal(linked.writes.length, 0);
+
+  // Owner changed since planning.
+  const reowned = store({ thread: threadDoc({ ownerId: OTHER }) });
+  await assert.rejects(applyMigrationRecordTransaction({
+    transaction: reowned.transaction,
+    threadRef: reowned.ref('thread', THREAD_A),
+    projectRef: reowned.ref('project', 'allocated-1'),
+    planRecord: planRecord(), timestamp: 'now',
+  }), /owner changed/);
+});
+
+test('re-applying after a successful commit creates nothing and fails the duplicate attempt', async () => {
+  const state = store({ thread: threadDoc() });
+  const record = planRecord();
+  await applyMigrationRecordTransaction({
+    transaction: state.transaction,
+    threadRef: state.ref('thread', THREAD_A),
+    projectRef: state.ref('project', record.plannedProjectId),
+    planRecord: record, timestamp: 'now',
+  });
+
+  // A second attempt with the same plan: the project id is now occupied.
+  await assert.rejects(applyMigrationRecordTransaction({
+    transaction: state.transaction,
+    threadRef: state.ref('thread', THREAD_A),
+    projectRef: state.ref('project', record.plannedProjectId),
+    planRecord: record, timestamp: 'later',
+  }), /already occupied/);
+  const thread = state.data.get(`threads/${THREAD_A}`);
+  assert.equal(thread.projectId, record.plannedProjectId);
+
+  // A rerun that replans sees an already-linked relationship and writes nothing.
+  const replanned = plan({
+    candidates: [candidate({ thread: threadDoc({ projectId: record.plannedProjectId }) })],
+    existingProjects: [state.data.get(`projects/${record.plannedProjectId}`)],
+  });
+  assert.equal(replanned.counts.alreadyLinked, 1);
+  assert.equal(replanned.counts.create, 0);
+});
+
+// ---------- plan comparison + baseline ----------
+
+function fullPlan(records, excluded = []) {
+  return {
+    version: 1,
+    counts: {
+      create: records.filter((r) => r.disposition === 'create').length,
+      alreadyLinked: records.filter((r) => r.disposition === 'already-linked').length,
+      blocked: records.filter((r) => r.disposition === 'blocked').length,
+      conflict: records.filter((r) => r.disposition === 'conflict').length,
+    },
+    records,
+    excluded,
+  };
+}
+
+test('plan drift detection fails closed', () => {
+  const reviewed = fullPlan([planRecord()]);
+  assert.deepEqual(diffPlans(reviewed, fullPlan([planRecord()])), []);
+  assert.deepEqual(diffPlans(reviewed, fullPlan([planRecord({ disposition: 'already-linked' })])).length > 0, true);
+  assert.deepEqual(diffPlans(reviewed, fullPlan([planRecord({ slug: 'changed' })])).length > 0, true);
+  const driftedMeta = fullPlan([planRecord({ metadata: { ...planRecord().metadata, title: 'Edited' } })]);
+  assert.deepEqual(diffPlans(reviewed, driftedMeta), [`${THREAD_A}|metadata-drift`]);
+  assert.deepEqual(diffPlans(reviewed, fullPlan([planRecord()], [{ threadId: THREAD_B, reason: 'not-published' }])).length > 0, true);
+});
+
+test('baseline reconciliation explains every difference', () => {
+  const create = planRecord();
+  const baseline = { version: 2, games: [{ id: THREAD_A }, { id: THREAD_B }] };
+  const reconciled = reconcileBaseline(baseline, {
+    records: [create],
+    excluded: [],
+  });
+  assert.equal(reconciled.supplied, true);
+  assert.deepEqual(reconciled.differences, [
+    { threadId: THREAD_B, difference: 'in-baseline-but-not-eligible', explanation: 'not in the current showcase Firestore set' },
+  ]);
+
+  const clean = reconcileBaseline({ version: 2, games: [{ id: THREAD_A }] }, { records: [create], excluded: [] });
+  assert.deepEqual(clean.differences, []);
+});
+
+// ---------- consent recheck + apply orchestration ----------
+
+function restWithConsent(consent) {
+  return {
+    async get(url) {
+      const m = /^\/channels\/(\d+)$/.exec(url);
+      if (m) {
+        if (consent === 'missing') throw Object.assign(new Error('404'), { status: 404 });
+        return { id: m[1], parent_id: FORUM, applied_tags: consent ? [PUBLISH_TAG] : [] };
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+  };
+}
+
+function dbBackedBy(state) {
+  return {
+    async runTransaction(fn) { return fn(state.transaction); },
+    // applyPlan builds its own refs from collection/doc paths before each transaction.
+    collection: (name) => ({
+      doc: (id) => state.ref(name === 'threads' ? 'thread' : 'project', id),
+    }),
+  };
+}
+
+test('consent recheck reads the live tag immediately before apply', async () => {
+  assert.equal(await consentStillActive(restWithConsent(true), THREAD_A, PUBLISH_TAG), true);
+  assert.equal(await consentStillActive(restWithConsent(false), THREAD_A, PUBLISH_TAG), false);
+  assert.equal(await consentStillActive(restWithConsent('missing'), THREAD_A, PUBLISH_TAG), false);
+});
+
+test('applyPlan refuses blocked or stale plans and revokes mid-flight without writes', async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'migrate-test-'));
+
+  const blockedPlan = fullPlan([planRecord({ disposition: 'blocked', blockers: [{ field: 'status' }] })]);
+  await assert.rejects(
+    applyPlan({ db: dbBackedBy(store()), rest: restWithConsent(true), reviewed: blockedPlan, fresh: blockedPlan, publishTagId: PUBLISH_TAG, outDir: tmp }),
+    /blocked record/,
+  );
+
+  const reviewed = fullPlan([planRecord()]);
+  const stale = fullPlan([planRecord({ slug: 'drifted' })]);
+  await assert.rejects(
+    applyPlan({ db: dbBackedBy(store()), rest: restWithConsent(true), reviewed, fresh: stale, publishTagId: PUBLISH_TAG, outDir: tmp }),
+    /stale/,
+  );
+
+  const consentRevoked = fullPlan([planRecord()]);
+  const state = store({ thread: threadDoc() });
+  await assert.rejects(
+    applyPlan({ db: dbBackedBy(state), rest: restWithConsent(false), reviewed: consentRevoked, fresh: consentRevoked, publishTagId: PUBLISH_TAG, outDir: tmp }),
+    /lost Publish-to-site consent/,
+  );
+  assert.equal(state.writes.length, 0, 'consent revocation writes nothing');
+
+  await fs.rm(tmp, { recursive: true, force: true });
+});
+
+test('applyPlan commits clean plans and stops on transaction failure with a committed-records report', async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'migrate-test-'));
+
+  const state = store({ thread: threadDoc() });
+  const good = fullPlan([planRecord()]);
+  const outcomes = await applyPlan({
+    db: dbBackedBy(state), rest: restWithConsent(true),
+    reviewed: good, fresh: good, publishTagId: PUBLISH_TAG, outDir: tmp,
+  });
+  assert.deepEqual(outcomes, [{ threadId: THREAD_A, projectId: 'allocated-1', result: 'committed' }]);
+  assert.equal(state.data.get(`threads/${THREAD_A}`).projectId, 'allocated-1');
+
+  // Second record's transaction fails: apply stops, first outcome is preserved in the report.
+  const stateTwo = store({ thread: threadDoc() });
+  stateTwo.data.set(`threads/${THREAD_B}`, threadDoc({ threadId: THREAD_B }));
+  const twoRecords = fullPlan([planRecord(), planRecord({ threadId: THREAD_B, plannedProjectId: 'allocated-2', slug: 'second', metadata: { ...planRecord().metadata, profileThreadId: THREAD_B } })]);
+  // Force the second record's transaction to fail: its planned project id is occupied.
+  stateTwo.data.set('projects/allocated-2', existingProject({ projectId: 'allocated-2' }));
+
+  await assert.rejects(
+    applyPlan({ db: dbBackedBy(stateTwo), rest: restWithConsent(true), reviewed: twoRecords, fresh: twoRecords, publishTagId: PUBLISH_TAG, outDir: tmp }),
+    /apply failed at/,
+  );
+  // First record still committed atomically before the stop.
+  assert.equal(stateTwo.data.get(`threads/${THREAD_A}`).projectId, 'allocated-1');
+
+  const reportFiles = await fs.readdir(tmp);
+  assert.equal(reportFiles.some((f) => f.startsWith('apply-failed-')), true);
+  const report = JSON.parse(await fs.readFile(path.join(tmp, reportFiles.find((f) => f.startsWith('apply-failed-'))), 'utf8'));
+  assert.equal(report.outcomes[0].result, 'committed');
+  assert.equal(report.outcomes[1].result, 'failed');
+
+  await fs.rm(tmp, { recursive: true, force: true });
+});
