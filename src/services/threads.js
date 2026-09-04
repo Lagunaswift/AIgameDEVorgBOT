@@ -11,8 +11,21 @@ function threadsRef() {
   return getDb().collection('threads');
 }
 
-// Register a thread. Idempotent: re-registering an existing thread leaves the original
-// createdAt/registeredAt and owner intact (merge), so /rescan never clobbers history.
+// Transaction core keeps Project links intact when a thread is re-registered by a rescan.
+export async function registerThreadTransaction({ transaction, ref, data }) {
+  const existing = await transaction.get(ref);
+  const current = existing.exists ? existing.data() : null;
+  const registration = {
+    ...data,
+    ...(!current || !Object.hasOwn(current, 'projectId') ? { projectId: null } : {}),
+    ...(!current || !Object.hasOwn(current, 'purpose') ? { purpose: null } : {}),
+  };
+  transaction.set(ref, registration, { merge: true });
+  return registration;
+}
+
+// Register a thread. Idempotent: re-registering an existing thread leaves Project links
+// intact, while a newly registered thread starts with no Project relationship.
 export async function registerThread(thread, mode) {
   const ref = threadsRef().doc(thread.id);
 
@@ -41,10 +54,7 @@ export async function registerThread(thread, mode) {
     registeredAt: serverTimestamp(),
   };
 
-  // merge:true so a backfill rescan updates title/mode without resetting registeredAt
-  // ordering or overwriting fields we intentionally leave undefined.
-  await ref.set(data, { merge: true });
-  return data;
+  return getDb().runTransaction((transaction) => registerThreadTransaction({ transaction, ref, data }));
 }
 
 // Look up a registered thread by id. Returns the doc data or null.

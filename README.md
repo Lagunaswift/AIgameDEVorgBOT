@@ -72,8 +72,23 @@ just a query filtered by ISO week. Nothing is ever wiped.
 
 ```
 threadId, forumId, ownerId, ownerTag, title,
-mode: "showcase" | "competition", createdAt, registeredAt
+mode: "showcase" | "competition", projectId: null | Project ID,
+purpose: null | "feedback" | "project-update" | "jam-entry", createdAt, registeredAt
 ```
+
+**`projects`** (doc id = generated `projectId`)
+
+```
+projectId, ownerId, title, slug, summary,
+status: "development" | "playable" | "released" | "paused",
+projectUrl: null | http(s) URL, platforms[], publishToSite,
+profileThreadId: null | registered Discord thread ID,
+createdAt, updatedAt
+```
+
+Threads may link to one Project; a Project may have many linked threads. `publishToSite` is
+dormant Project state for a later phase. The current **Publish to site** Discord tag remains
+the sole site-export authority.
 
 **`points`** (doc id = `${threadId}_${commentMessageId}`)
 
