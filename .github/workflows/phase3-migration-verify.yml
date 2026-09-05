@@ -1,0 +1,118 @@
+# Manual, read-only Phase 3 gate. The emulator job proves transaction behavior
+# without production credentials. The live job rebuilds the migration plan from
+# current Discord/Firestore state and the private site's current public baseline.
+# It never applies a plan and never uploads the plan artifact, which contains
+# private migration metadata.
+name: Verify Phase 3 migration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-3-migration-verification
+  cancel-in-progress: false
+
+jobs:
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout bot
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify migration transaction against Firestore emulator
+        env:
+          GCLOUD_PROJECT: demo-aigamedev-phase3
+        run: >-
+          npx --yes firebase-tools@15.29.0 emulators:exec
+          --only firestore
+          --project demo-aigamedev-phase3
+          --config .github/firebase-emulator.json
+          "node --test test/migrate-projects.emulator.test.mjs"
+
+  live-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout bot
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout current site baseline
+        uses: actions/checkout@v4
+        with:
+          repository: Lagunaswift/AIGAMEDEVSITE
+          token: ${{ secrets.SITE_PUSH_TOKEN }}
+          path: site
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate read-only live migration plan
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GUILD_ID: ${{ secrets.GUILD_ID }}
+          SITE_PUBLISH_TAG_ID: ${{ vars.SITE_PUBLISH_TAG_ID }}
+        run: >-
+          npm run migrate:projects --
+          --baseline site/src/data/showcase.json
+          --out "$RUNNER_TEMP/phase3-migration"
+
+      - name: Verify baseline coverage
+        env:
+          PLAN_DIR: ${{ runner.temp }}/phase3-migration
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import path from 'node:path';
+
+          const files = (await fs.readdir(process.env.PLAN_DIR))
+            .filter((name) => /^plan-.*\.json$/.test(name));
+          if (files.length !== 1) {
+            throw new Error(`expected exactly one migration plan, found ${files.length}`);
+          }
+
+          const plan = JSON.parse(await fs.readFile(path.join(process.env.PLAN_DIR, files[0]), 'utf8'));
+          const { create, alreadyLinked, blocked, conflict, baselineGames } = plan.counts;
+          if (blocked !== 0 || conflict !== 0) {
+            throw new Error(`migration plan is not clean: blocked=${blocked}, conflict=${conflict}`);
+          }
+
+          const lostBaseline = plan.baseline.differences.filter(({ difference }) =>
+            difference === 'baseline-public-but-not-migratable' ||
+            difference === 'in-baseline-but-not-eligible');
+          if (lostBaseline.length > 0) {
+            throw new Error(`${lostBaseline.length} baseline Project(s) are not safely migratable`);
+          }
+
+          await fs.appendFile(process.env.GITHUB_STEP_SUMMARY,
+            `## Phase 3 dry run\n\n- Create: ${create}\n- Already linked: ${alreadyLinked}\n- Blocked: ${blocked}\n- Conflicts: ${conflict}\n- Baseline Projects: ${baselineGames}\n`);
+          NODE
