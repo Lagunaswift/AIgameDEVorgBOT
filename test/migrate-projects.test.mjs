@@ -93,6 +93,18 @@ function existingProject(overrides = {}) {
   };
 }
 
+function matchingExistingProject(overrides = {}) {
+  return existingProject({
+    title: 'Rhythm Of The Streets',
+    slug: 'rhythm-of-the-streets',
+    summary: 'A rhythm game with tactical AI commands.',
+    status: 'development',
+    projectUrl: null,
+    platforms: ['web'],
+    ...overrides,
+  });
+}
+
 function plan({ candidates, existingProjects = [], allocateProjectId } = {}) {
   let seq = 0;
   return planMigration({
@@ -357,9 +369,51 @@ test('existing slug occupancy forces the suffixed candidate or blocks', () => {
 
 test('a consistent existing relationship is a rerun no-op', () => {
   const linked = candidate({ thread: { projectId: 'existing-project-1' } });
-  const planned = plan({ candidates: [linked], existingProjects: [existingProject()] });
+  const planned = plan({ candidates: [linked], existingProjects: [matchingExistingProject()] });
   assert.equal(planned.counts.alreadyLinked, 1);
   assert.equal(planned.counts.create, 0);
+  assert.equal(planned.records[0].resumeMetadataValidated, true);
+  assert.deepEqual(planned.records[0].metadata, {
+    ownerId: OWNER,
+    title: 'Rhythm Of The Streets',
+    slug: 'rhythm-of-the-streets',
+    summary: 'A rhythm game with tactical AI commands.',
+    status: 'development',
+    projectUrl: null,
+    platforms: ['web'],
+    profileThreadId: THREAD_A,
+  });
+});
+
+test('already-linked resume validation conflicts on every migration-owned metadata drift', () => {
+  const linked = candidate({ thread: { projectId: 'existing-project-1' } });
+  const mutations = [
+    ['ownerId', OTHER, /owner/],
+    ['title', 'Edited title', /title/],
+    ['slug', 'edited-slug', /slug/],
+    ['summary', 'Edited summary', /summary/],
+    ['status', 'playable', /status/],
+    ['projectUrl', 'https://example.com', /projectUrl/],
+    ['platforms', ['ios'], /platforms/],
+  ];
+  for (const [field, value, reasonPattern] of mutations) {
+    const planned = plan({
+      candidates: [linked],
+      existingProjects: [matchingExistingProject({ [field]: value })],
+    });
+    assert.equal(planned.records[0].disposition, 'conflict', `${field} drift must conflict`);
+    assert.match(planned.records[0].reason, reasonPattern);
+  }
+
+  const blockedSource = plan({
+    candidates: [candidate({
+      thread: { projectId: 'existing-project-1' },
+      extraBlockers: [{ field: 'summary', reason: 'starter message inaccessible', provenance: 'starter message' }],
+    })],
+    existingProjects: [matchingExistingProject()],
+  });
+  assert.equal(blockedSource.records[0].disposition, 'conflict');
+  assert.match(blockedSource.records[0].reason, /source metadata is blocked/);
 });
 
 test('inconsistent existing relationships are reported conflicts, never repaired', () => {
@@ -721,6 +775,16 @@ test('plan drift detection fails closed', () => {
   assert.deepEqual(diffPlans(reviewed, driftedMeta), [`${THREAD_A}|metadata-drift`]);
   const driftedSource = fullPlan([planRecord({ expectedThread: { ...planRecord().expectedThread, projectUrl: 'https://x' } })]);
   assert.deepEqual(diffPlans(reviewed, driftedSource), [`${THREAD_A}|source-state-drift`]);
+  const linked = planRecord({ disposition: 'already-linked', resumeMetadataValidated: true });
+  const linkedMetadataDrift = planRecord({
+    disposition: 'already-linked',
+    resumeMetadataValidated: true,
+    metadata: { ...planRecord().metadata, summary: 'Edited after resume preflight' },
+  });
+  assert.deepEqual(
+    diffPlans(fullPlan([linked]), fullPlan([linkedMetadataDrift])),
+    [`${THREAD_A}|metadata-drift`],
+  );
   assert.ok(diffPlans(reviewed, fullPlan([planRecord()], [{ threadId: THREAD_B, reason: 'not-published' }])).length > 0);
 });
 
@@ -830,7 +894,7 @@ test('applyPlan refuses blocked, stale, and mis-bound plans', async () => {
   await fs.rm(tmp, { recursive: true, force: true });
 });
 
-test('applyPlan commits clean plans and every stop path reports committed records', async () => {
+test('applyPlan commits a clean plan atomically and failures commit no migration writes', async () => {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'migrate-test-'));
 
   const state = store({ thread: threadDoc() });
@@ -842,8 +906,7 @@ test('applyPlan commits clean plans and every stop path reports committed record
   assert.deepEqual(outcomes, [{ threadId: THREAD_A, projectId: 'allocated-1', result: 'committed' }]);
   assert.equal(state.data.get(`threads/${THREAD_A}`).projectId, 'allocated-1');
 
-  // F5: a consent loss on the SECOND record (outside the transaction try/catch in the
-  // old design) still stops with a structured report listing the committed first record.
+  // Consent is rechecked for every record before the transaction starts.
   const stateTwo = store({ thread: threadDoc() });
   stateTwo.data.set(`threads/${THREAD_B}`, threadDoc({ threadId: THREAD_B }));
   const twoRecords = fullPlan([
@@ -858,29 +921,65 @@ test('applyPlan commits clean plans and every stop path reports committed record
     }),
     /lost Publish-to-site consent/,
   );
-  assert.equal(stateTwo.data.get(`threads/${THREAD_A}`).projectId, 'allocated-1', 'first record committed');
+  assert.equal(stateTwo.data.get(`threads/${THREAD_A}`).projectId, null, 'consent failure commits nothing');
+  assert.equal(stateTwo.writes.length, 0);
 
   let reportFiles = await fs.readdir(tmp);
   assert.ok(reportFiles.some((f) => f.startsWith('apply-failed-')), 'failure report written');
   const consentReport = JSON.parse(await fs.readFile(path.join(tmp, reportFiles.find((f) => f.startsWith('apply-failed-'))), 'utf8'));
-  assert.equal(consentReport.outcomes[0].result, 'committed');
-  assert.equal(consentReport.outcomes[1].result, 'failed');
+  assert.deepEqual(consentReport.outcomes, []);
+  assert.equal(consentReport.atomic, true);
   assert.match(consentReport.error, /consent/);
 
-  // Transaction failure path: same reporting guarantee.
+  // A conflict on the second pair is found during the transaction's read/validation
+  // phase, before writes for the first pair are queued.
   const stateThree = store({ thread: threadDoc() });
   stateThree.data.set(`threads/${THREAD_B}`, threadDoc({ threadId: THREAD_B }));
   stateThree.data.set('projects/allocated-2', existingProject({ projectId: 'allocated-2' }));
   await assert.rejects(
     applyPlan({ db: dbBackedBy(stateThree), rest: restWithConsent(true), reviewed: twoRecords, fresh: twoRecords, publishTagId: PUBLISH_TAG, outDir: tmp }),
-    /apply failed at/,
+    /atomic apply failed before any migration write committed/,
   );
+  assert.equal(stateThree.data.get(`threads/${THREAD_A}`).projectId, null);
+  assert.equal(stateThree.writes.length, 0);
   reportFiles = await fs.readdir(tmp);
   const failureReports = reportFiles.filter((f) => f.startsWith('apply-failed-'));
-  assert.ok(failureReports.length >= 2);
+  assert.ok(failureReports.length >= 1);
   const txReport = JSON.parse(await fs.readFile(path.join(tmp, failureReports[failureReports.length - 1]), 'utf8'));
-  assert.equal(txReport.outcomes[0].result, 'committed');
-  assert.equal(txReport.outcomes[1].result, 'failed');
+  assert.deepEqual(txReport.outcomes, []);
+  assert.equal(txReport.atomic, true);
+
+  await fs.rm(tmp, { recursive: true, force: true });
+});
+
+test('atomic resume guard rejects already-linked metadata changed after preflight', async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'migrate-resume-test-'));
+  const state = store({
+    thread: threadDoc({ projectId: 'allocated-1' }),
+    project: matchingExistingProject({ projectId: 'allocated-1' }),
+  });
+  state.data.set(`threads/${THREAD_B}`, threadDoc({ threadId: THREAD_B }));
+
+  const linkedRecord = planRecord({ disposition: 'already-linked', resumeMetadataValidated: true });
+  const createRecord = planRecord({
+    threadId: THREAD_B,
+    plannedProjectId: 'allocated-2',
+    slug: 'second',
+    metadata: { ...planRecord().metadata, slug: 'second', profileThreadId: THREAD_B },
+  });
+  const resumePlan = fullPlan([linkedRecord, createRecord]);
+  const db = dbBackedBy(state);
+  db.runTransaction = async (fn) => {
+    state.data.get('projects/allocated-1').summary = 'Changed after fresh preflight';
+    return fn(state.transaction);
+  };
+
+  await assert.rejects(
+    applyPlan({ db, rest: restWithConsent(true), reviewed: resumePlan, fresh: resumePlan, publishTagId: PUBLISH_TAG, outDir: tmp }),
+    /metadata changed before resume apply: summary/,
+  );
+  assert.equal(state.data.get(`threads/${THREAD_B}`).projectId, null, 'remaining create is not committed');
+  assert.equal(state.writes.length, 0);
 
   await fs.rm(tmp, { recursive: true, force: true });
 });

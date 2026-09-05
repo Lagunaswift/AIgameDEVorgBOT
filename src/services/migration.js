@@ -12,11 +12,10 @@
 //   §31    private threads are never auto-published.
 //   §71    structured state must come from explicit sources, not prose.
 //
-// TRANSACTION SCOPE (honest limits): one transaction guards exactly one (thread, planned
-// Project doc) pair — creation plus backlink. It does NOT detect competing slugs or
-// profile-thread claims introduced by concurrent unrelated Project writers between
-// preflight and commit; preventing those is an explicit operator precondition for
-// --apply (see docs/phase3-migration.md), not something this code guarantees.
+// TRANSACTION SCOPE: the one-time apply reads every planned Thread/Project pair and
+// commits every remaining creation/backlink in one Firestore transaction. This makes a
+// partial-apply resume prove all previously committed records before any remaining write
+// and lets Firestore retry or abort the whole batch if Project state changes concurrently.
 
 import {
   PROJECT_PLATFORMS,
@@ -198,6 +197,29 @@ function blockersForMetadata({ ownerId, title, summary, projectUrlInvalid, statu
   return blockers;
 }
 
+const MIGRATION_METADATA_FIELDS = Object.freeze([
+  'ownerId',
+  'title',
+  'slug',
+  'summary',
+  'status',
+  'projectUrl',
+  'platforms',
+  'profileThreadId',
+]);
+
+function migrationMetadataFromProject(project) {
+  return Object.fromEntries(MIGRATION_METADATA_FIELDS.map((field) => [
+    field,
+    field === 'platforms' ? [...project[field]] : project[field],
+  ]));
+}
+
+function migrationMetadataDifferences(existing, expected) {
+  return MIGRATION_METADATA_FIELDS.filter((field) =>
+    JSON.stringify(existing[field]) !== JSON.stringify(expected[field]));
+}
+
 // Builds the full migration plan from eligible candidates plus existing Project state.
 // Every candidate gets exactly one disposition:
 //   create         — eligible, all metadata valid, no existing relationship
@@ -306,6 +328,25 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
       reason: null,
     };
 
+    // Derive and validate the deterministic source metadata for both new records and
+    // already-linked records. The latter matters when resuming after a partial apply:
+    // a valid Project relationship is not enough if the committed Project's migration
+    // metadata differs from the source that this run would write.
+    const statusDerivation = deriveProjectStatus(
+      { ...candidate.thread, threadId: candidate.threadId },
+      statusSources,
+    );
+    const metadataBlockers = [
+      ...blockersForMetadata({
+        ownerId: candidate.ownerId,
+        title: candidate.title,
+        summary: candidate.summary,
+        projectUrlInvalid: Boolean(candidate.projectUrlInvalid),
+        statusDerivation,
+      }),
+      ...(candidate.extraBlockers || []),
+    ];
+
     const linkedKey = candidate.thread.projectId != null ? candidate.thread.projectId : null;
 
     if (linkedKey != null && !validProjects.has(linkedKey) && !invalidProjects.has(linkedKey)) {
@@ -342,9 +383,77 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
         plans.push(record);
         continue;
       }
+
+      if (metadataBlockers.length) {
+        record.disposition = 'conflict';
+        record.reason = `linked Project cannot be resume-validated because source metadata is blocked: ${JSON.stringify(metadataBlockers)}`;
+        record.plannedProjectId = linkedKey;
+        plans.push(record);
+        continue;
+      }
+
+      const otherTakenSlugs = new Set();
+      for (const project of existingProjectList) {
+        if (project._docId === linkedKey) continue;
+        try {
+          otherTakenSlugs.add(normalizeProjectSlug(project.slug));
+        } catch {
+          // Malformed slug diagnostics were already recorded above.
+        }
+      }
+      for (const planned of plans) {
+        if (planned.slug) otherTakenSlugs.add(planned.slug);
+      }
+      const expectedSlug = resolveSlug({
+        base: slugifyBase(candidate.title),
+        projectId: linkedKey,
+        taken: otherTakenSlugs,
+      });
+      if (!expectedSlug || existing.slug !== expectedSlug) {
+        record.disposition = 'conflict';
+        record.reason = 'linked Project slug differs from the deterministic migration slug';
+        record.plannedProjectId = linkedKey;
+        record.slug = existing.slug;
+        plans.push(record);
+        continue;
+      }
+
+      let expectedProject;
+      try {
+        expectedProject = buildMigrationProjectRecord({
+          projectId: linkedKey,
+          ownerId: candidate.ownerId,
+          title: candidate.title,
+          slug: expectedSlug,
+          summary: candidate.summary,
+          status: statusDerivation.status,
+          projectUrl: candidate.projectUrl ?? null,
+          platforms: candidate.platforms,
+          profileThreadId: candidate.threadId,
+          timestamp: 'preflight',
+        });
+      } catch (err) {
+        record.disposition = 'conflict';
+        record.reason = `linked Project cannot be resume-validated: ${err.message}`;
+        record.plannedProjectId = linkedKey;
+        plans.push(record);
+        continue;
+      }
+      const expectedMetadata = migrationMetadataFromProject(expectedProject);
+      const metadataDifferences = migrationMetadataDifferences(existing, expectedMetadata);
+      if (metadataDifferences.length) {
+        record.disposition = 'conflict';
+        record.reason = `linked Project migration metadata differs from the current deterministic source: ${metadataDifferences.join(', ')}`;
+        record.plannedProjectId = linkedKey;
+        record.slug = existing.slug;
+        plans.push(record);
+        continue;
+      }
       record.disposition = 'already-linked';
       record.plannedProjectId = linkedKey;
       record.slug = existing.slug;
+      record.metadata = expectedMetadata;
+      record.resumeMetadataValidated = true;
       plans.push(record);
       continue;
     }
@@ -360,25 +469,9 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
       continue;
     }
 
-    // The reviewed Phase 3 source is keyed by the physical Discord thread id, which is
-    // the Firestore document id rather than a persisted Thread field.
-    const statusDerivation = deriveProjectStatus(
-      { ...candidate.thread, threadId: candidate.threadId },
-      statusSources,
-    );
-    const blockers = [
-      ...blockersForMetadata({
-        ownerId: candidate.ownerId,
-        title: candidate.title,
-        summary: candidate.summary,
-        projectUrlInvalid: Boolean(candidate.projectUrlInvalid),
-        statusDerivation,
-      }),
-      ...(candidate.extraBlockers || []),
-    ];
-    if (blockers.length) {
+    if (metadataBlockers.length) {
       record.disposition = 'blocked';
-      record.blockers = blockers;
+      record.blockers = metadataBlockers;
       plans.push(record);
       continue;
     }
@@ -430,16 +523,7 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
     record.disposition = 'create';
     record.plannedProjectId = plannedProjectId;
     record.slug = slug;
-    record.metadata = {
-      ownerId: project.ownerId,
-      title: project.title,
-      slug: project.slug,
-      summary: project.summary,
-      status: project.status,
-      projectUrl: project.projectUrl,
-      platforms: project.platforms,
-      profileThreadId: project.profileThreadId,
-    };
+    record.metadata = migrationMetadataFromProject(project);
     takenSlugs.add(slug);
     plans.push(record);
   }
@@ -459,27 +543,16 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
 
 const sameField = (a, b) => (a ?? null) === (b ?? null);
 
-// One record = one transaction: the Project doc is created and the original thread's
-// projectId backlink is written atomically. All validation happens inside the
-// transaction against freshly read state. Scope (F6): this guards exactly the
-// (thread, planned Project) pair — see the module header for the concurrent-writer
-// precondition it deliberately does not cover.
-export async function applyMigrationRecordTransaction({
-  transaction, threadRef, projectRef, planRecord, timestamp,
-}) {
-  const [threadSnap, projectSnap] = await Promise.all([transaction.get(threadRef), transaction.get(projectRef)]);
+function assertThreadSourceMatches(threadSnap, planRecord, { alreadyLinked }) {
   if (!threadSnap.exists) throw new Error(`thread ${planRecord.threadId} disappeared before apply`);
-  if (projectSnap.exists) throw new Error(`planned Project id ${planRecord.plannedProjectId} is already occupied`);
-
   const thread = threadSnap.data();
-  // A create was planned against a null backlink: ANY non-null projectId now — even one
-  // equal to the planned id — means state changed since planning and must not be
-  // silently repaired or accepted (F8).
-  if (thread.projectId != null) {
+  if (alreadyLinked) {
+    if (thread.projectId !== planRecord.plannedProjectId) {
+      throw new Error(`thread ${planRecord.threadId} no longer links to approved Project ${planRecord.plannedProjectId}`);
+    }
+  } else if (thread.projectId != null) {
     throw new Error(`thread ${planRecord.threadId} gained a Project link (${thread.projectId}) after planning; refusing to create`);
   }
-  // Stale Firestore-side state fails closed (F7): the source fields the metadata was
-  // derived from must be unchanged, and the owner must still be present and identical.
   if (!planRecord.expectedThread) {
     throw new Error(`plan record for ${planRecord.threadId} lacks the expectedThread snapshot; refusing to apply`);
   }
@@ -497,16 +570,81 @@ export async function applyMigrationRecordTransaction({
   if (thread.ownerId == null || thread.ownerId !== ownerId) {
     throw new Error(`thread ${planRecord.threadId} owner changed since planning (${thread.ownerId})`);
   }
+  return thread;
+}
 
-  const project = buildMigrationProjectRecord({
+function validateCreateSnapshots({ threadSnap, projectSnap, planRecord, timestamp }) {
+  if (projectSnap.exists) throw new Error(`planned Project id ${planRecord.plannedProjectId} is already occupied`);
+  assertThreadSourceMatches(threadSnap, planRecord, { alreadyLinked: false });
+  return buildMigrationProjectRecord({
     projectId: planRecord.plannedProjectId,
     ...planRecord.metadata,
     timestamp,
   });
+}
+
+function validateAlreadyLinkedSnapshots({ threadSnap, projectSnap, projectRef, planRecord }) {
+  if (!projectSnap.exists) {
+    throw new Error(`approved Project ${planRecord.plannedProjectId} disappeared before resume apply`);
+  }
+  assertThreadSourceMatches(threadSnap, planRecord, { alreadyLinked: true });
+  const project = { ...projectSnap.data(), _docId: projectRef.id };
+  const issues = existingProjectIssues(project);
+  if (issues.length) {
+    throw new Error(`approved Project ${planRecord.plannedProjectId} became malformed before resume apply: ${issues.join('; ')}`);
+  }
+  if (project.publishToSite !== true) {
+    throw new Error(`approved Project ${planRecord.plannedProjectId} is no longer published`);
+  }
+  const differences = migrationMetadataDifferences(project, planRecord.metadata);
+  if (differences.length) {
+    throw new Error(`approved Project ${planRecord.plannedProjectId} metadata changed before resume apply: ${differences.join(', ')}`);
+  }
+}
+
+// Focused one-record helper retained for unit/emulator coverage. Production apply uses
+// applyMigrationPlanTransaction below so resume guards and all remaining writes share
+// one atomic transaction.
+export async function applyMigrationRecordTransaction({
+  transaction, threadRef, projectRef, planRecord, timestamp,
+}) {
+  const [threadSnap, projectSnap] = await Promise.all([transaction.get(threadRef), transaction.get(projectRef)]);
+  const project = validateCreateSnapshots({ threadSnap, projectSnap, planRecord, timestamp });
 
   transaction.set(projectRef, project);
   // Only the backlink is written; every other Thread field (purpose, scoring identity,
   // jam linkage) is preserved untouched.
   transaction.update(threadRef, { projectId: planRecord.plannedProjectId });
   return project;
+}
+
+// Whole-plan transaction used by the production apply. All reads happen before any
+// write, as required by Firestore transactions. `already-linked` records are read-only
+// guards; `create` records are committed atomically as one batch.
+export async function applyMigrationPlanTransaction({ transaction, entries, timestamp }) {
+  const snapshots = await Promise.all(entries.flatMap(({ threadRef, projectRef }) => [
+    transaction.get(threadRef),
+    transaction.get(projectRef),
+  ]));
+  const validated = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const threadSnap = snapshots[index * 2];
+    const projectSnap = snapshots[index * 2 + 1];
+    if (entry.planRecord.disposition === 'already-linked') {
+      validateAlreadyLinkedSnapshots({ ...entry, threadSnap, projectSnap });
+      validated.push({ ...entry, project: null });
+    } else if (entry.planRecord.disposition === 'create') {
+      const project = validateCreateSnapshots({ threadSnap, projectSnap, planRecord: entry.planRecord, timestamp });
+      validated.push({ ...entry, project });
+    } else {
+      throw new Error(`plan record ${entry.planRecord.threadId} has non-applicable disposition ${entry.planRecord.disposition}`);
+    }
+  }
+  for (const { threadRef, projectRef, planRecord, project } of validated) {
+    if (!project) continue;
+    transaction.set(projectRef, project);
+    transaction.update(threadRef, { projectId: planRecord.plannedProjectId });
+  }
+  return validated.filter(({ project }) => project).map(({ planRecord, project }) => ({ planRecord, project }));
 }

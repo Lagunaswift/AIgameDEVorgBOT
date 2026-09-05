@@ -16,7 +16,10 @@ backlink — Project creation and backlink in one Firestore transaction.
 
 - **Dry run is read-only.** Discord REST reads + Firestore reads only.
 - **Idempotent.** A consistent existing Project↔thread relationship is a no-op on
-  rerun; the migration never republishes, overwrites, or "repairs" existing records.
+  rerun only when the existing Project's migration-owned metadata still exactly matches
+  the current deterministic source; the migration never republishes, overwrites, or
+  "repairs" existing records. This exact check makes a partial-apply retry fail closed
+  if any already-committed Project changed before the retry.
   A create planned against a null backlink is refused if the thread gained ANY Project
   link after planning — changed state is never silently accepted.
 - **Fail closed.** Any blocked record (missing/inferred-impossible metadata, e.g.
@@ -37,13 +40,15 @@ backlink — Project creation and backlink in one Firestore transaction.
 
 ## Operational preconditions (enforced by the operator, not the code)
 
-- **No concurrent Project writers during apply.** Each transaction guards exactly its
-  (thread, planned Project) pair; it cannot detect a competing slug or profile-thread
-  claim introduced between preflight and commit. While `--apply` runs, nothing else
-  may create or edit Project records.
-- Live consent is rechecked immediately before each transaction (full boundary:
-  channel exists, parent forum unchanged, publish tag applied, guild matches), but
-  Firestore transactions cannot be atomic with Discord state.
+- **One atomic Firestore transaction.** Apply reads all nine Thread/Project pairs before
+  writing any of them, validates already-linked resume records in the same transaction,
+  and commits all remaining Project creations/backlinks together. A concurrent Firestore
+  change makes the transaction retry or fail rather than letting later writes proceed on
+  stale resume metadata. Keep the operator writer freeze anyway so Discord and Firestore
+  source state remain stable for the short apply window.
+- Live consent is rechecked for every record immediately before the transaction (full
+  boundary: channel exists, parent forum unchanged, publish tag applied, guild matches),
+  but Firestore transactions cannot be atomic with Discord state.
 
 ## Steps
 
@@ -84,10 +89,10 @@ npm run migrate:projects -- --apply \
 The apply re-runs the full preflight live — replaying the reviewed plan's Project ids
 and requiring the fresh plan to match the reviewed one exactly (dispositions, ids,
 slugs, metadata, and the Firestore source-field snapshot per record) — then re-checks
-the full consent boundary immediately before each record's transaction and commits
-records sequentially. On ANY failure (consent loss, REST error, transaction rejection)
-it stops and writes `.migration/apply-failed-<timestamp>.json` listing every record
-that already committed.
+the full consent boundary for every record immediately before one atomic Firestore
+transaction. On ANY failure (consent loss, REST error, transaction rejection), no
+migration write commits and `.migration/apply-failed-<timestamp>.json` records the
+failure.
 
 ### 3. Verify
 

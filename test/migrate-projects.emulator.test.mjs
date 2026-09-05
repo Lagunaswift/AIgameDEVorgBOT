@@ -13,7 +13,10 @@ const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 
 test('transaction apply against the Firestore emulator', { skip: emulatorHost ? false : 'FIRESTORE_EMULATOR_HOST not set; emulator integration skipped' }, async (t) => {
   const admin = (await import('firebase-admin')).default;
-  const { applyMigrationRecordTransaction } = await import('../src/services/migration.js');
+  const {
+    applyMigrationPlanTransaction,
+    applyMigrationRecordTransaction,
+  } = await import('../src/services/migration.js');
 
   const appName = 'migrate-emulator-test';
   const app = admin.apps.some((a) => a.name === appName)
@@ -32,12 +35,6 @@ test('transaction apply against the Firestore emulator', { skip: emulatorHost ? 
     threadId: THREAD, ownerId: OWNER, mode: 'showcase', forumId: '1051088980176805920',
     projectId: null, purpose: null, createdAt: 'then', registeredAt: 'then',
   });
-  t.after(async () => {
-    await threadRef.delete();
-    await projectRef.delete();
-    await app.delete();
-  });
-
   const planRecord = {
     threadId: THREAD,
     disposition: 'create',
@@ -72,4 +69,72 @@ test('transaction apply against the Firestore emulator', { skip: emulatorHost ? 
     })),
     /already linked|already occupied|gained a Project link/,
   );
+
+  // Production path: validate an already-linked resume record and commit one remaining
+  // create in the same transaction.
+  const RESUME_THREAD = '900345678901234568';
+  const REMAINING_THREAD = '900345678901234569';
+  const RESUME_PROJECT = `resume-${Date.now()}`;
+  const REMAINING_PROJECT = `remaining-${Date.now()}`;
+  const resumeThreadRef = db.collection('threads').doc(RESUME_THREAD);
+  const remainingThreadRef = db.collection('threads').doc(REMAINING_THREAD);
+  const resumeProjectRef = db.collection('projects').doc(RESUME_PROJECT);
+  const remainingProjectRef = db.collection('projects').doc(REMAINING_PROJECT);
+  const sourceThread = (threadId, projectId = null) => ({
+    threadId, ownerId: OWNER, mode: 'showcase', forumId: '1051088980176805920',
+    projectId, purpose: null, projectUrl: null, createdAt: 'then', registeredAt: 'then',
+  });
+  const metadata = (threadId, projectId, slug) => ({
+    projectId,
+    ownerId: OWNER,
+    title: slug === 'resume-game' ? 'Resume Game' : 'Remaining Game',
+    slug,
+    summary: slug === 'resume-game' ? 'Already committed.' : 'Still to commit.',
+    status: 'development',
+    projectUrl: null,
+    platforms: ['web'],
+    publishToSite: true,
+    profileThreadId: threadId,
+    createdAt: 'earlier',
+    updatedAt: 'earlier',
+  });
+  await resumeThreadRef.set(sourceThread(RESUME_THREAD, RESUME_PROJECT));
+  await remainingThreadRef.set(sourceThread(REMAINING_THREAD));
+  await resumeProjectRef.set(metadata(RESUME_THREAD, RESUME_PROJECT, 'resume-game'));
+  t.after(async () => {
+    await Promise.all([
+      threadRef.delete(), projectRef.delete(),
+      resumeThreadRef.delete(), remainingThreadRef.delete(),
+      resumeProjectRef.delete(), remainingProjectRef.delete(),
+    ]);
+    await app.delete();
+  });
+  const planEntry = (threadId, projectId, slug, disposition) => ({
+    planRecord: {
+      threadId,
+      disposition,
+      plannedProjectId: projectId,
+      slug,
+      resumeMetadataValidated: disposition === 'already-linked',
+      expectedThread: { mode: 'showcase', forumId: '1051088980176805920', projectUrl: null },
+      metadata: {
+        ownerId: OWNER,
+        title: slug === 'resume-game' ? 'Resume Game' : 'Remaining Game',
+        slug,
+        summary: slug === 'resume-game' ? 'Already committed.' : 'Still to commit.',
+        status: 'development', projectUrl: null, platforms: ['web'], profileThreadId: threadId,
+      },
+    },
+    threadRef: threadId === RESUME_THREAD ? resumeThreadRef : remainingThreadRef,
+    projectRef: projectId === RESUME_PROJECT ? resumeProjectRef : remainingProjectRef,
+  });
+  const entries = [
+    planEntry(RESUME_THREAD, RESUME_PROJECT, 'resume-game', 'already-linked'),
+    planEntry(REMAINING_THREAD, REMAINING_PROJECT, 'remaining-game', 'create'),
+  ];
+  await db.runTransaction((transaction) => applyMigrationPlanTransaction({
+    transaction, entries, timestamp: 'now',
+  }));
+  assert.equal((await remainingProjectRef.get()).exists, true);
+  assert.equal((await remainingThreadRef.get()).data().projectId, REMAINING_PROJECT);
 });

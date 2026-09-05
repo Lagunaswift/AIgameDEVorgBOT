@@ -25,7 +25,7 @@ import { config } from '../src/config.js';
 import { getDb, getFirebaseProjectId, initFirebase, serverTimestamp } from '../src/firebase.js';
 import { normalizeProjectUrl } from '../src/lib/publicMetadata.js';
 import {
-  applyMigrationRecordTransaction,
+  applyMigrationPlanTransaction,
   planMigration,
   platformsFromTagNames,
 } from '../src/services/migration.js';
@@ -358,9 +358,9 @@ function diffPlans(reviewed, fresh) {
   const freshKeys = new Set(fresh.records.map(key).concat(fresh.excluded.map((r) => `${r.threadId}|excluded|`)));
   const changed = [...reviewedKeys].filter((k) => !freshKeys.has(k)).concat([...freshKeys].filter((k) => !reviewedKeys.has(k)));
   if (changed.length) return changed;
-  const reviewedCreates = new Map(reviewed.records.filter((r) => r.disposition === 'create').map((r) => [r.threadId, r]));
-  for (const freshRecord of fresh.records.filter((r) => r.disposition === 'create')) {
-    const reviewedRecord = reviewedCreates.get(freshRecord.threadId);
+  const reviewedRecords = new Map(reviewed.records.map((r) => [r.threadId, r]));
+  for (const freshRecord of fresh.records) {
+    const reviewedRecord = reviewedRecords.get(freshRecord.threadId);
     if (JSON.stringify(reviewedRecord?.metadata) !== JSON.stringify(freshRecord.metadata)) {
       return [`${freshRecord.threadId}|metadata-drift`];
     }
@@ -427,30 +427,39 @@ async function applyPlan({ db, rest, reviewed, fresh, publishTagId, outDir }) {
   }
 
   const outcomes = [];
-  for (const record of fresh.records) {
-    if (record.disposition !== 'create') continue;
-
-    try {
+  try {
+    // Discord cannot participate in a Firestore transaction, so recheck every consent
+    // boundary immediately before opening the one atomic Firestore transaction.
+    for (const record of fresh.records) {
       if (!(await consentStillActive(rest, record, publishTagId))) {
-        throw new Error('thread lost Publish-to-site consent (or source/guild state changed) immediately before apply');
+        throw new Error(`thread ${record.threadId} lost Publish-to-site consent (or source/guild state changed) immediately before apply`);
       }
-
-      const threadRef = db.collection('threads').doc(record.threadId);
-      const projectRef = db.collection('projects').doc(record.plannedProjectId);
-      const project = await db.runTransaction((transaction) => applyMigrationRecordTransaction({
-        transaction, threadRef, projectRef, planRecord: record, timestamp: serverTimestamp(),
-      }));
-      outcomes.push({ threadId: record.threadId, projectId: record.plannedProjectId, result: 'committed' });
-      console.log(`[migrate] committed ${record.threadId} -> ${record.plannedProjectId} (${project.slug})`);
-    } catch (err) {
-      outcomes.push({ threadId: record.threadId, projectId: record.plannedProjectId, result: 'failed', error: err.message });
-      const reportPath = await writeFailureReport(outDir, {
-        version: 1, stoppedAt: record.threadId, error: err.message, outcomes,
-      });
-      throw new Error(`apply failed at ${record.threadId}: ${err.message} — already committed records are listed in ${reportPath}; rerun preflight to produce a fresh plan and apply again`);
     }
+    const entries = fresh.records.map((planRecord) => ({
+      planRecord,
+      threadRef: db.collection('threads').doc(planRecord.threadId),
+      projectRef: db.collection('projects').doc(planRecord.plannedProjectId),
+    }));
+    const committed = await db.runTransaction((transaction) => applyMigrationPlanTransaction({
+      transaction,
+      entries,
+      timestamp: serverTimestamp(),
+    }));
+    for (const { planRecord, project } of committed) {
+      outcomes.push({ threadId: planRecord.threadId, projectId: planRecord.plannedProjectId, result: 'committed' });
+      console.log(`[migrate] committed ${planRecord.threadId} -> ${planRecord.plannedProjectId} (${project.slug})`);
+    }
+    return outcomes;
+  } catch (err) {
+    const reportPath = await writeFailureReport(outDir, {
+      version: 1,
+      stoppedAt: null,
+      error: err.message,
+      outcomes,
+      atomic: true,
+    });
+    throw new Error(`atomic apply failed before any migration write committed: ${err.message} — failure report: ${reportPath}; rerun preflight before retrying`);
   }
-  return outcomes;
 }
 
 // ---------- main ----------
