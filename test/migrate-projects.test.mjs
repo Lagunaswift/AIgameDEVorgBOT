@@ -253,6 +253,41 @@ test('existing slug occupancy forces the suffixed candidate or blocks', () => {
     existingProjects: [existingProject({ profileThreadId: null, slug: 'existing-game' })],
   });
   assert.equal(planned.records[0].slug, 'existing-game-allocated-1');
+
+  // A malformed physical record still owns its stored slug. Its validation issues do
+  // not make the slug available for reuse by the migration (F9_A regression).
+  const malformedOccupant = plan({
+    candidates: [candidate({ title: 'Existing Game' })],
+    existingProjects: [existingProject({
+      profileThreadId: null,
+      slug: 'existing-game',
+      createdAt: undefined,
+    })],
+  });
+  assert.equal(malformedOccupant.records[0].disposition, 'create');
+  assert.equal(malformedOccupant.records[0].slug, 'existing-game-allocated-1');
+
+  // A duplicate profile claimant is still an occupied physical Project and retains
+  // its usable slug even though its relationship is diagnostically invalid.
+  const duplicateClaimOccupant = plan({
+    candidates: [candidate({ title: 'Existing Game' })],
+    existingProjects: [
+      existingProject({ projectId: 'claim-one', slug: 'existing-game' }),
+      existingProject({ projectId: 'claim-two', slug: 'other-game' }),
+    ],
+  });
+  assert.equal(duplicateClaimOccupant.records[0].disposition, 'conflict');
+  assert.match(duplicateClaimOccupant.records[0].reason, /no backlink/);
+
+  const unrelatedCandidate = candidate({ title: 'Existing Game', threadId: THREAD_B });
+  const duplicateClaimSlug = plan({
+    candidates: [unrelatedCandidate],
+    existingProjects: [
+      existingProject({ projectId: 'claim-one', slug: 'existing-game' }),
+      existingProject({ projectId: 'claim-two', slug: 'other-game' }),
+    ],
+  });
+  assert.equal(duplicateClaimSlug.records[0].slug, 'existing-game-allocated-1');
 });
 
 test('a consistent existing relationship is a rerun no-op', () => {
@@ -323,6 +358,76 @@ test('malformed or duplicated existing Projects turn references into conflicts',
   });
   assert.equal(duplicateClaims.records[0].disposition, 'conflict');
   assert.match(duplicateClaims.records[0].reason, /no backlink/);
+
+  // A malformed Project claiming an otherwise-unlinked candidate thread remains a
+  // claimant. Invalid records must not disappear from profile-claim indexing (F9_B).
+  const malformedClaim = plan({
+    candidates: [candidate()],
+    existingProjects: [existingProject({
+      projectId: 'malformed-claim',
+      createdAt: undefined,
+    })],
+  });
+  assert.equal(malformedClaim.records[0].disposition, 'conflict');
+  assert.match(malformedClaim.records[0].reason, /malformed-claim.*no backlink/);
+
+  // The same malformed claim cannot be masked by an unrelated valid Project.
+  const mixedClaims = plan({
+    candidates: [candidate()],
+    existingProjects: [
+      existingProject({ projectId: 'valid-other', profileThreadId: THREAD_B }),
+      existingProject({ projectId: 'malformed-claim', createdAt: undefined }),
+    ],
+  });
+  assert.equal(mixedClaims.records[0].disposition, 'conflict');
+  assert.match(mixedClaims.records[0].reason, /malformed-claim.*no backlink/);
+
+  // A valid linked Project is not accepted as a no-op when a malformed Project also
+  // claims the same profile thread.
+  const linkedWithMalformedDuplicate = plan({
+    candidates: [candidate({ thread: { projectId: 'valid-link' } })],
+    existingProjects: [
+      existingProject({ projectId: 'valid-link' }),
+      existingProject({ projectId: 'malformed-claim', createdAt: undefined }),
+    ],
+  });
+  assert.equal(linkedWithMalformedDuplicate.records[0].disposition, 'conflict');
+  assert.match(linkedWithMalformedDuplicate.records[0].reason, /claimed by multiple Projects/);
+
+  // Both the embedded and physical identities of a malformed Project occupy ids;
+  // neither can be reused to hide, overwrite, or repair that physical document.
+  const mismatchedIdentity = existingProject({
+    projectId: 'wrong-embedded-id',
+    _docId: 'physical-id',
+    profileThreadId: null,
+  });
+  const physicalIdOccupied = plan({
+    candidates: [candidate()],
+    existingProjects: [mismatchedIdentity],
+    allocateProjectId: () => 'physical-id',
+  });
+  assert.equal(physicalIdOccupied.records[0].disposition, 'conflict');
+  assert.match(physicalIdOccupied.records[0].reason, /already occupied/);
+  const embeddedIdOccupied = plan({
+    candidates: [candidate()],
+    existingProjects: [mismatchedIdentity],
+    allocateProjectId: () => 'wrong-embedded-id',
+  });
+  assert.equal(embeddedIdOccupied.records[0].disposition, 'conflict');
+  assert.match(embeddedIdOccupied.records[0].reason, /already occupied/);
+});
+
+test('existing Project conflict output is invariant to fixture order', () => {
+  const existing = [
+    existingProject({ projectId: 'z-malformed', createdAt: undefined }),
+    existingProject({ projectId: 'a-valid' }),
+  ];
+  const linked = candidate({ thread: { projectId: 'a-valid' } });
+  const forward = plan({ candidates: [linked], existingProjects: existing });
+  const reversed = plan({ candidates: [linked], existingProjects: [...existing].reverse() });
+  assert.deepEqual(forward, reversed);
+  assert.equal(forward.records[0].disposition, 'conflict');
+  assert.match(forward.records[0].reason, /claimed by multiple Projects \(a-valid, z-malformed\)/);
 });
 
 test('missing or ambiguous metadata blocks records instead of inventing values', () => {
