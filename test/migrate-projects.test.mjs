@@ -8,6 +8,8 @@ import {
   buildMigrationProjectRecord,
   deriveProjectStatus,
   existingProjectIssues,
+  MIGRATION_SCHEMA_SOURCES,
+  PHASE_3_MIGRATION_STATUS_BY_THREAD_ID,
   planMigration,
   platformsFromTagNames,
   resolveSlug,
@@ -35,8 +37,7 @@ const PUBLISH_TAG = '1537600958245249154';
 const WEB_TAG = '1111111111111111111';
 const TARGET = { firebaseProject: 'aigame-dev', database: '(default)' };
 
-// Simulates a real structured status source (the registry production uses is empty
-// until a genuine source exists — these tests must not rely on that gate being open).
+// Simulates an alternate structured status source for focused planning tests.
 const TEST_STATUS_SOURCES = [{ name: 'test-structured-status', read: (thread) => thread.__testStatus ?? null }];
 
 const DEFAULT_THREAD = {
@@ -162,6 +163,57 @@ test('status gate fails closed without an explicit structured source', () => {
   }]);
 });
 
+test('production Phase 3 status source contains only the nine reviewed thread mappings', () => {
+  const expected = {
+    '1544780450570960947': 'development',
+    '1544479322231021638': 'development',
+    '1544119575208132808': 'development',
+    '1543960553410662511': 'development',
+    '1536490387487858718': 'playable',
+    '1529153039079047340': 'playable',
+    '1526926441584005213': 'playable',
+    '1521897996772573417': 'playable',
+    '1520859751934726295': 'playable',
+  };
+  assert.deepEqual(PHASE_3_MIGRATION_STATUS_BY_THREAD_ID, expected);
+  assert.ok(Object.isFrozen(PHASE_3_MIGRATION_STATUS_BY_THREAD_ID));
+  assert.ok(Object.isFrozen(MIGRATION_SCHEMA_SOURCES));
+
+  for (const [threadId, status] of Object.entries(expected)) {
+    assert.deepEqual(deriveProjectStatus({ threadId }), {
+      status,
+      source: 'phase-3-reviewed-thread-status-map',
+    });
+  }
+  assert.deepEqual(deriveProjectStatus({ threadId: THREAD_A }), { status: null, source: 'none' });
+});
+
+test('production planning opens only mapped Phase 3 status candidates', () => {
+  const mappedCandidates = Object.keys(PHASE_3_MIGRATION_STATUS_BY_THREAD_ID)
+    .map((threadId) => candidate({ threadId, title: `Mapped ${threadId}` }));
+  const unknownCandidate = candidate({
+    threadId: THREAD_A,
+    title: 'Unknown Status Source',
+    // A spoofed field cannot select a mapping; planning supplies the document thread ID.
+    thread: { threadId: '1544780450570960947' },
+  });
+  let sequence = 0;
+  const planned = planMigration({
+    candidates: [...mappedCandidates, unknownCandidate],
+    existingProjects: [],
+    allocateProjectId: () => `production-${++sequence}`,
+  });
+
+  assert.deepEqual(planned.counts, { create: 9, alreadyLinked: 0, blocked: 1, conflict: 0 });
+  const unknown = planned.records.find((record) => record.threadId === THREAD_A);
+  assert.equal(unknown.disposition, 'blocked');
+  assert.deepEqual(unknown.blockers, [{
+    field: 'status',
+    reason: 'no explicit structured status source exists',
+    provenance: 'thread schema/Discord tags/export contract',
+  }]);
+});
+
 // F10: a structured source that yields an unrecognised value is caught by the full
 // Phase 2 validator in preflight, before any transaction could commit.
 test('preflight applies the full Project validator to structured values', () => {
@@ -253,6 +305,54 @@ test('existing slug occupancy forces the suffixed candidate or blocks', () => {
     existingProjects: [existingProject({ profileThreadId: null, slug: 'existing-game' })],
   });
   assert.equal(planned.records[0].slug, 'existing-game-allocated-1');
+
+  // A malformed physical record still owns its stored slug. Its validation issues do
+  // not make the slug available for reuse by the migration (F9_A regression).
+  const malformedOccupant = plan({
+    candidates: [candidate({ title: 'Existing Game' })],
+    existingProjects: [existingProject({
+      profileThreadId: null,
+      slug: 'existing-game',
+      createdAt: undefined,
+    })],
+  });
+  assert.equal(malformedOccupant.records[0].disposition, 'create');
+  assert.equal(malformedOccupant.records[0].slug, 'existing-game-allocated-1');
+
+  // Whitespace makes the stored slug malformed, but its normalized occupied value must
+  // still reserve the candidate slug (review regression).
+  const malformedWhitespaceOccupant = plan({
+    candidates: [candidate({ title: 'Existing Game' })],
+    existingProjects: [existingProject({
+      profileThreadId: null,
+      slug: ' existing-game ',
+      createdAt: undefined,
+    })],
+  });
+  assert.equal(malformedWhitespaceOccupant.records[0].disposition, 'create');
+  assert.equal(malformedWhitespaceOccupant.records[0].slug, 'existing-game-allocated-1');
+
+  // A duplicate profile claimant is still an occupied physical Project and retains
+  // its usable slug even though its relationship is diagnostically invalid.
+  const duplicateClaimOccupant = plan({
+    candidates: [candidate({ title: 'Existing Game' })],
+    existingProjects: [
+      existingProject({ projectId: 'claim-one', slug: 'existing-game' }),
+      existingProject({ projectId: 'claim-two', slug: 'other-game' }),
+    ],
+  });
+  assert.equal(duplicateClaimOccupant.records[0].disposition, 'conflict');
+  assert.match(duplicateClaimOccupant.records[0].reason, /no backlink/);
+
+  const unrelatedCandidate = candidate({ title: 'Existing Game', threadId: THREAD_B });
+  const duplicateClaimSlug = plan({
+    candidates: [unrelatedCandidate],
+    existingProjects: [
+      existingProject({ projectId: 'claim-one', slug: 'existing-game' }),
+      existingProject({ projectId: 'claim-two', slug: 'other-game' }),
+    ],
+  });
+  assert.equal(duplicateClaimSlug.records[0].slug, 'existing-game-allocated-1');
 });
 
 test('a consistent existing relationship is a rerun no-op', () => {
@@ -323,6 +423,76 @@ test('malformed or duplicated existing Projects turn references into conflicts',
   });
   assert.equal(duplicateClaims.records[0].disposition, 'conflict');
   assert.match(duplicateClaims.records[0].reason, /no backlink/);
+
+  // A malformed Project claiming an otherwise-unlinked candidate thread remains a
+  // claimant. Invalid records must not disappear from profile-claim indexing (F9_B).
+  const malformedClaim = plan({
+    candidates: [candidate()],
+    existingProjects: [existingProject({
+      projectId: 'malformed-claim',
+      createdAt: undefined,
+    })],
+  });
+  assert.equal(malformedClaim.records[0].disposition, 'conflict');
+  assert.match(malformedClaim.records[0].reason, /malformed-claim.*no backlink/);
+
+  // The same malformed claim cannot be masked by an unrelated valid Project.
+  const mixedClaims = plan({
+    candidates: [candidate()],
+    existingProjects: [
+      existingProject({ projectId: 'valid-other', profileThreadId: THREAD_B }),
+      existingProject({ projectId: 'malformed-claim', createdAt: undefined }),
+    ],
+  });
+  assert.equal(mixedClaims.records[0].disposition, 'conflict');
+  assert.match(mixedClaims.records[0].reason, /malformed-claim.*no backlink/);
+
+  // A valid linked Project is not accepted as a no-op when a malformed Project also
+  // claims the same profile thread.
+  const linkedWithMalformedDuplicate = plan({
+    candidates: [candidate({ thread: { projectId: 'valid-link' } })],
+    existingProjects: [
+      existingProject({ projectId: 'valid-link' }),
+      existingProject({ projectId: 'malformed-claim', createdAt: undefined }),
+    ],
+  });
+  assert.equal(linkedWithMalformedDuplicate.records[0].disposition, 'conflict');
+  assert.match(linkedWithMalformedDuplicate.records[0].reason, /claimed by multiple Projects/);
+
+  // Both the embedded and physical identities of a malformed Project occupy ids;
+  // neither can be reused to hide, overwrite, or repair that physical document.
+  const mismatchedIdentity = existingProject({
+    projectId: 'wrong-embedded-id',
+    _docId: 'physical-id',
+    profileThreadId: null,
+  });
+  const physicalIdOccupied = plan({
+    candidates: [candidate()],
+    existingProjects: [mismatchedIdentity],
+    allocateProjectId: () => 'physical-id',
+  });
+  assert.equal(physicalIdOccupied.records[0].disposition, 'conflict');
+  assert.match(physicalIdOccupied.records[0].reason, /already occupied/);
+  const embeddedIdOccupied = plan({
+    candidates: [candidate()],
+    existingProjects: [mismatchedIdentity],
+    allocateProjectId: () => 'wrong-embedded-id',
+  });
+  assert.equal(embeddedIdOccupied.records[0].disposition, 'conflict');
+  assert.match(embeddedIdOccupied.records[0].reason, /already occupied/);
+});
+
+test('existing Project conflict output is invariant to fixture order', () => {
+  const existing = [
+    existingProject({ projectId: 'z-malformed', createdAt: undefined }),
+    existingProject({ projectId: 'a-valid' }),
+  ];
+  const linked = candidate({ thread: { projectId: 'a-valid' } });
+  const forward = plan({ candidates: [linked], existingProjects: existing });
+  const reversed = plan({ candidates: [linked], existingProjects: [...existing].reverse() });
+  assert.deepEqual(forward, reversed);
+  assert.equal(forward.records[0].disposition, 'conflict');
+  assert.match(forward.records[0].reason, /claimed by multiple Projects \(a-valid, z-malformed\)/);
 });
 
 test('missing or ambiguous metadata blocks records instead of inventing values', () => {

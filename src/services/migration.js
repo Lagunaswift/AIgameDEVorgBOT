@@ -26,12 +26,32 @@ import {
   normalizeProjectSlug,
 } from '../lib/projectValidation.js';
 
+// One-time Phase 3 migration input only. These user-reviewed values are keyed solely by
+// the exact public Discord thread ID; they are not a Project field or a general status
+// fallback for future writes.
+export const PHASE_3_MIGRATION_STATUS_BY_THREAD_ID = Object.freeze({
+  '1544780450570960947': 'development', // Rhythm Of The Streets
+  '1544479322231021638': 'development', // Blow for Blow
+  '1544119575208132808': 'development', // Provision Food Factory Sim
+  '1543960553410662511': 'development', // Dead Shift
+  '1536490387487858718': 'playable', // Cairn
+  '1529153039079047340': 'playable', // Burn Rate
+  '1526926441584005213': 'playable', // FoldCity
+  '1521897996772573417': 'playable', // Chronicles of Terros
+  '1520859751934726295': 'playable', // Vibe Coding Tycoon
+});
+
+function readPhase3MigrationReviewedStatus(thread) {
+  const threadId = thread?.threadId;
+  return typeof threadId === 'string'
+    ? PHASE_3_MIGRATION_STATUS_BY_THREAD_ID[threadId] ?? null
+    : null;
+}
+
 export const MIGRATION_SCHEMA_SOURCES = Object.freeze([
-  // Explicit structured sources a migrated Project's required `status` may come from.
-  // The Phase 2 data model has none: the Thread schema carries no status field, Discord
-  // tags carry none, and the site export contract carries none. When a real source is
-  // added (e.g. a dedicated structured tag or /mygame backfill), register it here —
-  // nothing else may relax this gate.
+  // This is deliberately the only production source for the one-time Phase 3 run.
+  // Unmapped thread IDs return null and remain blocked by the fail-closed status gate.
+  Object.freeze({ name: 'phase-3-reviewed-thread-status-map', read: readPhase3MigrationReviewedStatus }),
 ]);
 
 // ---------- status gate ----------
@@ -185,41 +205,78 @@ function blockersForMetadata({ ownerId, title, summary, projectUrlInvalid, statu
 //   blocked        — metadata gate failed (fail closed; apply is refused while any exist)
 //   conflict       — inconsistent existing state; never auto-repaired
 export function planMigration({ candidates, existingProjects, allocateProjectId, statusSources }) {
-  // Existing Project validation: only contract-valid, unambiguously-claimed records
-  // may back an already-linked no-op. Invalid or duplicate-claimed Projects turn every
-  // candidate that references them into a conflict instead.
+  // Keep physical occupancy independent from validation diagnostics. A malformed
+  // Firestore document remains a real occupied document until an operator repairs it.
+  const existingProjectList = [...(existingProjects || [])].sort((a, b) => {
+    const aKey = `${a?._docId ?? ''}\u0000${a?.projectId ?? ''}`;
+    const bKey = `${b?._docId ?? ''}\u0000${b?.projectId ?? ''}`;
+    return aKey.localeCompare(bKey);
+  });
   const validProjects = new Map();
-  const invalidProjects = new Map(); // projectId -> issue string
-  for (const project of existingProjects || []) {
+  const invalidProjects = new Map(); // embedded/physical project id -> Set<issue>
+  const addInvalidProject = (identifiers, issue) => {
+    for (const id of identifiers.filter((value) => value != null)) {
+      const issues = invalidProjects.get(id) || new Set();
+      issues.add(issue);
+      invalidProjects.set(id, issues);
+    }
+  };
+  const invalidIssue = (id) => [...(invalidProjects.get(id) || [])].sort().join('; ');
+  for (const project of existingProjectList) {
     const issues = existingProjectIssues(project);
-    const key = project.projectId ?? project._docId;
+    const key = project._docId;
+    const identifiers = [project._docId, project.projectId];
     if (issues.length) {
-      invalidProjects.set(key, issues.join('; '));
+      // Index malformed records by both identities. A mismatched embedded id must not
+      // hide the physical Firestore document from backlink or planned-id checks.
+      addInvalidProject(identifiers, issues.join('; '));
       continue;
     }
     validProjects.set(key, project);
   }
-  const profileClaims = new Map(); // profileThreadId -> [projectIds]
-  for (const project of validProjects.values()) {
+  const profileClaims = new Map(); // profileThreadId -> [{ id, identifiers }]
+  // Claims made by malformed records still occupy a profile thread. Index every
+  // physical Project so an invalid claimant cannot be silently ignored.
+  for (const project of existingProjectList) {
     if (project.profileThreadId == null) continue;
-    const claims = profileClaims.get(project.profileThreadId) || [];
-    claims.push(project.projectId);
-    profileClaims.set(project.profileThreadId, claims);
+    let threadId;
+    try {
+      threadId = assertDiscordId(project.profileThreadId, 'profile thread ID');
+    } catch {
+      continue;
+    }
+    const identifiers = [project._docId, project.projectId];
+    const claims = profileClaims.get(threadId) || [];
+    claims.push({ id: project._docId ?? project.projectId ?? '(unknown Project)', identifiers });
+    profileClaims.set(threadId, claims);
   }
   for (const [threadId, claims] of profileClaims) {
+    claims.sort((a, b) => String(a.id).localeCompare(String(b.id)));
     if (claims.length > 1) {
-      for (const projectId of claims) {
-        invalidProjects.set(projectId, `profile thread ${threadId} is claimed by multiple Projects (${claims.join(', ')})`);
-        validProjects.delete(projectId);
+      const issue = `profile thread ${threadId} is claimed by multiple Projects (${claims.map((claim) => claim.id).join(', ')})`;
+      for (const claim of claims) {
+        addInvalidProject(claim.identifiers, issue);
+        validProjects.delete(claim.id);
       }
     }
   }
 
   const plans = [];
-  const takenSlugs = new Set([...validProjects.values(), ...invalidProjects.values()]
-    .map((project) => project.slug)
-    .filter(Boolean));
-  const existingIds = new Set([...validProjects.keys(), ...invalidProjects.keys()]);
+  // Malformed records still physically store their slugs and document ids. Reserve
+  // both before planning so preflight cannot create collisions that apply discovers
+  // only after operator approval.
+  const takenSlugs = new Set();
+  for (const project of existingProjectList) {
+    try {
+      takenSlugs.add(normalizeProjectSlug(project.slug));
+    } catch {
+      // An unusable stored value cannot collide with a valid planned slug; its
+      // validation diagnostic remains available through existingProjectIssues.
+    }
+  }
+  const existingIds = new Set(existingProjectList
+    .flatMap((project) => [project.projectId, project._docId])
+    .filter((id) => id != null));
 
   // Stable thread-ID order (snowflake ascending) so slug allocation is deterministic.
   const ordered = [...candidates].sort((a, b) => {
@@ -260,7 +317,7 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
 
     if (linkedKey != null && invalidProjects.has(linkedKey)) {
       record.disposition = 'conflict';
-      record.reason = `linked Project ${linkedKey} is malformed: ${invalidProjects.get(linkedKey)}`;
+      record.reason = `linked Project ${linkedKey} is malformed: ${invalidIssue(linkedKey)}`;
       record.plannedProjectId = linkedKey;
       plans.push(record);
       continue;
@@ -292,23 +349,23 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
       continue;
     }
 
-    // No backlink on the thread. Any valid Project claiming this thread as its profile
-    // thread is a contradictory mapping; a malformed claimant is still reported as a
-    // conflict on this thread rather than silently ignored.
+    // No backlink on the thread. Any Project claiming this thread as its profile thread
+    // is a contradictory mapping, including a malformed claimant.
     const claimants = profileClaims.get(candidate.threadId) || [];
-    const invalidClaimants = [...invalidProjects.entries()]
-      .filter(([, issue]) => issue.includes(`profile thread ${candidate.threadId} is claimed`))
-      .map(([projectId]) => projectId);
-    if (claimants.length || invalidClaimants.length) {
+    if (claimants.length) {
       record.disposition = 'conflict';
-      const who = claimants.length ? claimants.join(', ') : invalidClaimants.join(', ');
-      record.reason = `Project(s) ${who} claim this thread as their profile thread while the thread has no backlink`;
-      record.plannedProjectId = claimants[0] ?? invalidClaimants[0] ?? null;
+      record.reason = `Project(s) ${claimants.map((claim) => claim.id).join(', ')} claim this thread as their profile thread while the thread has no backlink`;
+      record.plannedProjectId = claimants[0]?.id ?? null;
       plans.push(record);
       continue;
     }
 
-    const statusDerivation = deriveProjectStatus(candidate.thread, statusSources);
+    // The reviewed Phase 3 source is keyed by the physical Discord thread id, which is
+    // the Firestore document id rather than a persisted Thread field.
+    const statusDerivation = deriveProjectStatus(
+      { ...candidate.thread, threadId: candidate.threadId },
+      statusSources,
+    );
     const blockers = [
       ...blockersForMetadata({
         ownerId: candidate.ownerId,
