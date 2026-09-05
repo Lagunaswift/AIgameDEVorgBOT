@@ -3,8 +3,9 @@
 // Operator-run administrative script (never bot startup, scheduled export, or a slash
 // command). Creates exactly ONE Project per currently published showcase Thread by
 // reproducing the exporter's publication boundary (Firestore mode query + live Discord
-// channel/source-forum state + Publish-to-site tag consent), copying only deterministic
-// metadata, and setting thread.projectId + project.profileThreadId atomically.
+// channel/source-forum/guild state + Publish-to-site tag consent), copying only
+// deterministic metadata, and setting thread.projectId + project.profileThreadId
+// atomically in one Firestore transaction per record.
 //
 // Usage:
 //   dry-run (default, read-only):
@@ -21,7 +22,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { REST } from 'discord.js';
 import { config } from '../src/config.js';
-import { getDb, initFirebase, serverTimestamp } from '../src/firebase.js';
+import { getDb, getFirebaseProjectId, initFirebase, serverTimestamp } from '../src/firebase.js';
 import { normalizeProjectUrl } from '../src/lib/publicMetadata.js';
 import {
   applyMigrationRecordTransaction,
@@ -35,11 +36,12 @@ import {
   getChannel,
   getForumTagMap,
   getStarterMessage,
+  isDirectRun,
   isMissingResource,
   truncate,
 } from './site-export-shared.mjs';
 
-const PLAN_VERSION = 1;
+const PLAN_VERSION = 2;
 
 // ---------- CLI args ----------
 
@@ -134,6 +136,16 @@ async function buildCandidates(db, rest, publishTagId) {
       continue;
     }
 
+    // Guild boundary (F11): a channel in a different guild than the one this deployment
+    // serves is not migration input, no matter what the Firestore record says.
+    if (channel.guild_id && channel.guild_id !== config.guildId) {
+      excluded.push({
+        threadId, disposition: 'excluded', reason: 'wrong-guild',
+        eligibility: { ...eligibility, channelGuildId: channel.guild_id },
+      });
+      continue;
+    }
+
     const tagMap = await getForumTagMap(rest, eligibility.forumId, forumTagCache);
     const appliedTags = channel.applied_tags.map((id) => {
       const tag = tagMap.get(id);
@@ -142,19 +154,9 @@ async function buildCandidates(db, rest, publishTagId) {
     });
     const tagNames = appliedTags.map((tag) => tag.name);
 
-    const starterMessage = await getStarterMessage(rest, threadId);
-    if (!starterMessage) {
-      excluded.push({
-        threadId,
-        disposition: 'excluded',
-        reason: 'starter-message-inaccessible',
-        eligibility,
-      });
-      continue;
-    }
-
     // Exporter-equivalent public title/description (site-export-shared normalisation).
     const title = truncate((channel.name || data.title || '').trim(), 120);
+    const starterMessage = await getStarterMessage(rest, threadId);
     const summary = extractText(starterMessage, 280);
 
     // Owner: registered owner wins, live Discord owner as fallback; a disagreement
@@ -167,6 +169,17 @@ async function buildCandidates(db, rest, publishTagId) {
 
     const { platforms, ignored } = platformsFromTagNames(tagNames);
 
+    const extraBlockers = [];
+    if (ownerConflict) {
+      extraBlockers.push({ field: 'ownerId', reason: 'registered owner differs from live Discord owner', provenance: 'thread.ownerId vs channel.owner_id' });
+    }
+    // F12: a consent-tagged public thread whose starter content cannot be read is a
+    // completeness blocker (matching the exporter's hard error), not an exclusion —
+    // inability to read currently public material is not evidence it should be skipped.
+    if (!starterMessage) {
+      extraBlockers.push({ field: 'summary', reason: 'starter message inaccessible; cannot derive the public description', provenance: 'starter message' });
+    }
+
     candidates.push({
       threadId,
       thread: data,
@@ -176,6 +189,12 @@ async function buildCandidates(db, rest, publishTagId) {
         ownerSource: data.ownerId ? 'thread.ownerId' : 'channel.owner_id',
         jamThreadId: data.jamId ?? null,
       },
+      // Snapshot of the Firestore-side source fields the transaction revalidates.
+      expectedThread: {
+        mode: data.mode ?? null,
+        forumId: data.forumId ?? null,
+        projectUrl: rawProjectUrl,
+      },
       title,
       summary,
       ownerId,
@@ -183,9 +202,7 @@ async function buildCandidates(db, rest, publishTagId) {
       projectUrlInvalid: rawProjectUrl != null && projectUrl == null,
       platforms,
       unknownTags: ignored,
-      extraBlockers: [
-        ...(ownerConflict ? [{ field: 'ownerId', reason: 'registered owner differs from live Discord owner', provenance: 'thread.ownerId vs channel.owner_id' }] : []),
-      ],
+      extraBlockers,
     });
   }
 
@@ -194,13 +211,17 @@ async function buildCandidates(db, rest, publishTagId) {
 
 async function loadExistingProjects(db) {
   const snap = await db.collection('projects').get();
-  return snap.docs.map((d) => d.data());
+  // _docId keeps the physical document id so identity can be validated instead of
+  // trusting the embedded field (F9).
+  return snap.docs.map((d) => ({ ...d.data(), _docId: d.id }));
 }
 
 // ---------- baseline reconciliation ----------
 
-// The baseline (site showcase.json) is a reconciliation cross-check ONLY — never a
-// consent authority or an input database. Every difference must be explainable.
+// The baseline (site showcase.json) is an ID-set cross-check ONLY — never a consent
+// authority, an input database, or a metadata/asset equality proof (that comparison
+// happens post-apply against a fresh export). Differences are reported with the
+// disposition evidence we actually have; no publication history is invented.
 function reconcileBaseline(baseline, plan) {
   if (!baseline) return { supplied: false, differences: [] };
   const byThreadId = new Map([
@@ -213,13 +234,16 @@ function reconcileBaseline(baseline, plan) {
   const differences = [];
   for (const id of baselineIds) {
     if (!plannedIds.has(id)) {
-      differences.push({ threadId: id, difference: 'in-baseline-but-not-eligible', explanation: 'not in the current showcase Firestore set' });
+      differences.push({
+        threadId: id, difference: 'in-baseline-but-not-eligible',
+        explanation: 'not in the current showcase Firestore set; cause not established by this preflight',
+      });
     } else {
       const record = byThreadId.get(id);
       if (record.disposition !== 'create' && record.disposition !== 'already-linked') {
         differences.push({
           threadId: id, difference: 'baseline-public-but-not-migratable',
-          explanation: `${record.disposition}${record.reason ? `: ${record.reason}` : ''}`,
+          explanation: `${record.disposition}${record.reason ? `: ${record.reason}` : ''}${record.blockers?.length ? `: ${JSON.stringify(record.blockers)}` : ''}`,
         });
       }
     }
@@ -227,20 +251,36 @@ function reconcileBaseline(baseline, plan) {
   for (const id of plannedIds) {
     if (!baselineIds.has(id)) {
       const record = byThreadId.get(id);
-      differences.push({ threadId: id, difference: 'eligible-but-not-in-baseline', explanation: 'published after the baseline export' });
+      differences.push({
+        threadId: id, difference: `${record.disposition}-but-not-in-baseline`,
+        explanation: 'absent from the supplied baseline; no publication history inferred',
+      });
     }
   }
-  return { supplied: true, differences };
+  return {
+    supplied: true,
+    differences,
+    scope: 'id-set cross-check only; metadata/asset equality is established post-apply by export comparison, not here',
+  };
 }
 
 // ---------- plan assembly ----------
 
-function assemblePlan({ db, target, publishTagId, candidates, excluded, existingProjects, baseline }) {
-  const idAllocator = () => db.collection('projects').doc().id;
+function assemblePlan({ db, target, publishTagId, candidates, excluded, existingProjects, baseline, replayIds, statusSources }) {
+  // F3: during apply, planned ids are REPLAYED from the reviewed plan rather than
+  // regenerated, so a fresh preflight of unchanged state produces an identical plan
+  // instead of false drift. Fresh random ids are allocated only in dry-run mode.
+  const replay = replayIds instanceof Map ? replayIds : null;
   const allocated = new Set();
-  const allocate = () => {
-    let id = idAllocator();
-    while (allocated.has(id)) id = idAllocator();
+  const freshId = () => db.collection('projects').doc().id;
+  const allocateProjectId = (candidate) => {
+    const replayed = replay ? replay.get(candidate.threadId) : undefined;
+    if (replayed != null && !allocated.has(replayed)) {
+      allocated.add(replayed);
+      return replayed;
+    }
+    let id = freshId();
+    while (allocated.has(id)) id = freshId();
     allocated.add(id);
     return id;
   };
@@ -248,7 +288,11 @@ function assemblePlan({ db, target, publishTagId, candidates, excluded, existing
   const planned = planMigration({
     candidates,
     existingProjects,
-    allocateProjectId: () => allocate(),
+    allocateProjectId,
+    // Undefined in production: the frozen empty registry applies (status gate closed).
+    // Injectable so tests can exercise the create path with a simulated structured
+    // source without weakening the production gate.
+    ...(statusSources ? { statusSources } : {}),
   });
 
   const counts = {
@@ -259,7 +303,7 @@ function assemblePlan({ db, target, publishTagId, candidates, excluded, existing
 
   return {
     version: PLAN_VERSION,
-    mode: 'preflight',
+    mode: replay ? 'apply-preflight' : 'dry-run',
     createdAt: new Date().toISOString(),
     target,
     publishTagId,
@@ -301,7 +345,9 @@ function summarise(plan) {
 // ---------- apply ----------
 
 function planIsApplicable(plan) {
-  if (!plan || plan.version !== PLAN_VERSION) throw new Error('reviewed plan has an unsupported version');
+  if (!plan || plan.version !== PLAN_VERSION) {
+    throw new Error(`plan version ${plan?.version} is not supported by this build (expected ${PLAN_VERSION}); regenerate the plan`);
+  }
   if (plan.counts.blocked > 0) throw new Error(`reviewed plan has ${plan.counts.blocked} blocked record(s); apply is refused`);
   if (plan.counts.conflict > 0) throw new Error(`reviewed plan has ${plan.counts.conflict} conflict record(s); apply is refused`);
 }
@@ -315,30 +361,66 @@ function diffPlans(reviewed, fresh) {
   const reviewedCreates = new Map(reviewed.records.filter((r) => r.disposition === 'create').map((r) => [r.threadId, r]));
   for (const freshRecord of fresh.records.filter((r) => r.disposition === 'create')) {
     const reviewedRecord = reviewedCreates.get(freshRecord.threadId);
-    if (JSON.stringify(reviewedRecord.metadata) !== JSON.stringify(freshRecord.metadata)) {
+    if (JSON.stringify(reviewedRecord?.metadata) !== JSON.stringify(freshRecord.metadata)) {
       return [`${freshRecord.threadId}|metadata-drift`];
+    }
+    if (JSON.stringify(reviewedRecord?.expectedThread) !== JSON.stringify(freshRecord.expectedThread)) {
+      return [`${freshRecord.threadId}|source-state-drift`];
     }
   }
   return [];
 }
 
-// Live consent recheck for one record, immediately before its transaction. The
-// transaction guards Firestore state; this guards the Discord side as closely as a
-// REST read allows.
-async function consentStillActive(rest, threadId, publishTagId) {
+// Live consent + source recheck for one record, immediately before its transaction.
+// Rechecks the full eligibility boundary (channel exists, parent forum unchanged,
+// applied_tags present, publish tag applied) — not just the tag bit. The transaction
+// guards Firestore state; this guards the Discord side as closely as a REST read allows.
+async function consentStillActive(rest, record, publishTagId) {
   let channel;
   try {
-    channel = await getChannel(rest, threadId);
+    channel = await getChannel(rest, record.threadId);
   } catch (err) {
     if (isMissingResource(err)) return false;
     throw err;
   }
-  return Array.isArray(channel.applied_tags) && channel.applied_tags.includes(publishTagId);
+  if (channel.guild_id && channel.guild_id !== config.guildId) return false;
+  const eligibility = checkShowcaseEligibility({
+    channel,
+    firestoreData: { forumId: record.eligibility?.forumId ?? record.expectedThread?.forumId },
+    sourceForumIds: new Set([record.eligibility?.forumId ?? record.expectedThread?.forumId]),
+    publishTagId,
+  });
+  return eligibility.status === 'ok';
+}
+
+// F5: every stop path after (or during) the record loop leaves a structured report of
+// what committed and what failed; a failure to WRITE the report never masks the
+// original error — it is appended to the thrown message.
+async function writeFailureReport(outDir, payload) {
+  const reportPath = path.join(outDir, `apply-failed-${Date.now()}.json`);
+  try {
+    await fs.mkdir(outDir, { recursive: true });
+    await fs.writeFile(reportPath, `${JSON.stringify(payload, null, 2)}\n`);
+    return reportPath;
+  } catch (writeErr) {
+    throw new Error(`${payload.error} — additionally, the failure report could not be written to ${reportPath}: ${writeErr.message}; committed records: ${JSON.stringify(payload.outcomes)}`);
+  }
 }
 
 async function applyPlan({ db, rest, reviewed, fresh, publishTagId, outDir }) {
   planIsApplicable(reviewed);
   planIsApplicable(fresh);
+
+  // F4: the approval is bound to the reviewed plan's target environment and consent
+  // configuration — a plan reviewed against a different Firebase project, database, or
+  // publish tag than the current live ones is not this approval.
+  if (JSON.stringify(reviewed.target) !== JSON.stringify(fresh.target)) {
+    throw new Error(`reviewed plan target ${JSON.stringify(reviewed.target)} does not match live target ${JSON.stringify(fresh.target)}; refusing to apply`);
+  }
+  if (reviewed.publishTagId !== fresh.publishTagId || reviewed.publishTagId !== publishTagId) {
+    throw new Error(`reviewed plan publishTagId ${reviewed.publishTagId} does not match the current consent tag ${publishTagId}; refusing to apply`);
+  }
+
   const drift = diffPlans(reviewed, fresh);
   if (drift.length) {
     throw new Error(`live state no longer matches the reviewed plan (stale): ${drift.join(', ')}`);
@@ -348,13 +430,13 @@ async function applyPlan({ db, rest, reviewed, fresh, publishTagId, outDir }) {
   for (const record of fresh.records) {
     if (record.disposition !== 'create') continue;
 
-    if (!(await consentStillActive(rest, record.threadId, publishTagId))) {
-      throw new Error(`thread ${record.threadId} lost Publish-to-site consent immediately before apply; stopping`);
-    }
-
-    const threadRef = db.collection('threads').doc(record.threadId);
-    const projectRef = db.collection('projects').doc(record.plannedProjectId);
     try {
+      if (!(await consentStillActive(rest, record, publishTagId))) {
+        throw new Error('thread lost Publish-to-site consent (or source/guild state changed) immediately before apply');
+      }
+
+      const threadRef = db.collection('threads').doc(record.threadId);
+      const projectRef = db.collection('projects').doc(record.plannedProjectId);
       const project = await db.runTransaction((transaction) => applyMigrationRecordTransaction({
         transaction, threadRef, projectRef, planRecord: record, timestamp: serverTimestamp(),
       }));
@@ -362,9 +444,9 @@ async function applyPlan({ db, rest, reviewed, fresh, publishTagId, outDir }) {
       console.log(`[migrate] committed ${record.threadId} -> ${record.plannedProjectId} (${project.slug})`);
     } catch (err) {
       outcomes.push({ threadId: record.threadId, projectId: record.plannedProjectId, result: 'failed', error: err.message });
-      const reportPath = path.join(outDir, `apply-failed-${Date.now()}.json`);
-      await fs.mkdir(outDir, { recursive: true });
-      await fs.writeFile(reportPath, `${JSON.stringify({ version: 1, stoppedAt: record.threadId, error: err.message, outcomes }, null, 2)}\n`);
+      const reportPath = await writeFailureReport(outDir, {
+        version: 1, stoppedAt: record.threadId, error: err.message, outcomes,
+      });
       throw new Error(`apply failed at ${record.threadId}: ${err.message} — already committed records are listed in ${reportPath}; rerun preflight to produce a fresh plan and apply again`);
     }
   }
@@ -375,8 +457,10 @@ async function applyPlan({ db, rest, reviewed, fresh, publishTagId, outDir }) {
 
 async function run({ db, rest, publishTagId, args }) {
   const target = {
-    firebaseProject: db.app.options.projectId,
-    database: db.databaseId || '(default)',
+    // F2: project identity comes from the initialised service-account credential (public
+    // `project_id` claim), never from SDK internals like db.app.
+    firebaseProject: getFirebaseProjectId(),
+    database: typeof db.databaseId === 'string' ? db.databaseId : '(default)',
   };
 
   let baseline = null;
@@ -389,9 +473,9 @@ async function run({ db, rest, publishTagId, args }) {
 
   const { candidates, excluded } = await buildCandidates(db, rest, publishTagId);
   const existingProjects = await loadExistingProjects(db);
-  const fresh = assemblePlan({ db, target, publishTagId, candidates, excluded, existingProjects, baseline });
 
   if (!args.apply) {
+    const fresh = assemblePlan({ db, target, publishTagId, candidates, excluded, existingProjects, baseline });
     await fs.mkdir(args.out, { recursive: true });
     const planPath = path.join(args.out, `plan-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
     await fs.writeFile(planPath, `${JSON.stringify(fresh, null, 2)}\n`);
@@ -402,7 +486,7 @@ async function run({ db, rest, publishTagId, args }) {
   }
 
   // Apply path: verify the explicit target, then require the live state to still match
-  // the reviewed plan before any write happens.
+  // the reviewed plan (with the reviewed plan's own ids replayed) before any write.
   if (args.firebaseProject !== target.firebaseProject || args.database !== target.database) {
     throw new Error(
       `target mismatch: credentials point at ${target.firebaseProject}/${target.database}, ` +
@@ -410,16 +494,33 @@ async function run({ db, rest, publishTagId, args }) {
     );
   }
   const reviewed = await readJson(args.plan);
+  planIsApplicable(reviewed);
+  const replayIds = new Map(
+    reviewed.records.filter((r) => r.disposition === 'create').map((r) => [r.threadId, r.plannedProjectId]),
+  );
+  const fresh = assemblePlan({ db, target, publishTagId, candidates, excluded, existingProjects, baseline, replayIds });
   const outcomes = await applyPlan({ db, rest, reviewed, fresh, publishTagId, outDir: args.out });
 
   const reportPath = path.join(args.out, `apply-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
-  await fs.mkdir(args.out, { recursive: true });
-  await fs.writeFile(reportPath, `${JSON.stringify({ version: 1, target, outcomes }, null, 2)}\n`);
+  try {
+    await fs.mkdir(args.out, { recursive: true });
+    await fs.writeFile(reportPath, `${JSON.stringify({ version: 1, target, outcomes }, null, 2)}\n`);
+  } catch (writeErr) {
+    // All records committed safely; only the report failed. Surface outcomes inline.
+    throw new Error(`apply committed ${outcomes.length} record(s) but the final report could not be written to ${reportPath}: ${writeErr.message} — outcomes: ${JSON.stringify(outcomes)}`);
+  }
   console.log(`[migrate] apply complete: ${outcomes.filter((o) => o.result === 'committed').length} committed, report: ${reportPath}`);
   return { outcomes, reportPath };
 }
 
-export { buildCandidates, assemblePlan, applyPlan, run, reconcileBaseline, diffPlans, consentStillActive };
+export { buildCandidates, assemblePlan, applyPlan, run, reconcileBaseline, diffPlans, consentStillActive, PLAN_VERSION };
+
+if (isDirectRun(process.argv[1], import.meta.url)) {
+  main().catch((err) => {
+    console.error(`[migrate] error: ${err.message}`);
+    process.exit(1);
+  });
+}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -431,18 +532,4 @@ async function main() {
   const rest = new REST({ version: '10' }).setToken(config.discordToken);
 
   await run({ db, rest, publishTagId, args });
-}
-
-const isDirectRun = (() => {
-  try {
-    return import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, '/')}`).href;
-  } catch {
-    return false;
-  }
-})();
-if (isDirectRun) {
-  main().catch((err) => {
-    console.error(`[migrate] error: ${err.message}`);
-    process.exit(1);
-  });
 }

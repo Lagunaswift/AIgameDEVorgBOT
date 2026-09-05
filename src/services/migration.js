@@ -11,6 +11,12 @@
 //          explicit Publish-to-site consent.
 //   §31    private threads are never auto-published.
 //   §71    structured state must come from explicit sources, not prose.
+//
+// TRANSACTION SCOPE (honest limits): one transaction guards exactly one (thread, planned
+// Project doc) pair — creation plus backlink. It does NOT detect competing slugs or
+// profile-thread claims introduced by concurrent unrelated Project writers between
+// preflight and commit; preventing those is an explicit operator precondition for
+// --apply (see docs/phase3-migration.md), not something this code guarantees.
 
 import {
   PROJECT_PLATFORMS,
@@ -33,6 +39,8 @@ export const MIGRATION_SCHEMA_SOURCES = Object.freeze([
 // Returns { status, source } or { status: null, source: 'none' }. Absent, invalid, or
 // ambiguous structured status must BLOCK the record (fail closed) — never defaulted.
 // `sources` is injectable for tests; production callers use the frozen registry above.
+// Values found here are NOT trusted: the full Project validator runs in preflight, so
+// an unrecognised value (e.g. "beta") becomes a per-record blocker.
 export function deriveProjectStatus(firestoreThread, sources = MIGRATION_SCHEMA_SOURCES) {
   const found = [];
   for (const source of sources) {
@@ -121,6 +129,36 @@ export function buildMigrationProjectRecord({ projectId, ownerId, title, slug, s
   };
 }
 
+// Validates a pre-existing Project document (physical Firestore doc id + stored data).
+// Returns an array of issues — empty means the record satisfies the full Phase 2
+// contract, so relying on it for already-linked/conlict decisions is safe.
+export function existingProjectIssues(project) {
+  const issues = [];
+  const docId = project && project._docId;
+  if (!docId) issues.push('missing physical document id');
+  try {
+    const input = normalizeProjectInput({
+      ownerId: project.ownerId,
+      title: project.title,
+      slug: project.slug,
+      summary: project.summary,
+      status: project.status,
+      projectUrl: project.projectUrl,
+      platforms: project.platforms,
+    });
+    if (project.projectId !== docId) {
+      issues.push(`embedded projectId ${project.projectId} does not match document id ${docId}`);
+    }
+    if (input.slug !== project.slug) issues.push('stored slug is not canonical');
+    if (typeof project.publishToSite !== 'boolean') issues.push('publishToSite is not a boolean');
+    if (project.profileThreadId != null) assertDiscordId(project.profileThreadId, 'profile thread ID');
+    if (project.createdAt == null || project.updatedAt == null) issues.push('missing timestamps');
+  } catch (err) {
+    issues.push(err.message);
+  }
+  return issues;
+}
+
 // ---------- planning ----------
 
 function blockersForMetadata({ ownerId, title, summary, projectUrlInvalid, statusDerivation }) {
@@ -147,12 +185,41 @@ function blockersForMetadata({ ownerId, title, summary, projectUrlInvalid, statu
 //   blocked        — metadata gate failed (fail closed; apply is refused while any exist)
 //   conflict       — inconsistent existing state; never auto-repaired
 export function planMigration({ candidates, existingProjects, allocateProjectId, statusSources }) {
+  // Existing Project validation: only contract-valid, unambiguously-claimed records
+  // may back an already-linked no-op. Invalid or duplicate-claimed Projects turn every
+  // candidate that references them into a conflict instead.
+  const validProjects = new Map();
+  const invalidProjects = new Map(); // projectId -> issue string
+  for (const project of existingProjects || []) {
+    const issues = existingProjectIssues(project);
+    const key = project.projectId ?? project._docId;
+    if (issues.length) {
+      invalidProjects.set(key, issues.join('; '));
+      continue;
+    }
+    validProjects.set(key, project);
+  }
+  const profileClaims = new Map(); // profileThreadId -> [projectIds]
+  for (const project of validProjects.values()) {
+    if (project.profileThreadId == null) continue;
+    const claims = profileClaims.get(project.profileThreadId) || [];
+    claims.push(project.projectId);
+    profileClaims.set(project.profileThreadId, claims);
+  }
+  for (const [threadId, claims] of profileClaims) {
+    if (claims.length > 1) {
+      for (const projectId of claims) {
+        invalidProjects.set(projectId, `profile thread ${threadId} is claimed by multiple Projects (${claims.join(', ')})`);
+        validProjects.delete(projectId);
+      }
+    }
+  }
+
   const plans = [];
-  const takenSlugs = new Set(existingProjects.map((project) => project.slug).filter(Boolean));
-  const projectByLinkedThreadId = new Map(
-    existingProjects.filter((project) => project.profileThreadId != null)
-      .map((project) => [project.profileThreadId, project]),
-  );
+  const takenSlugs = new Set([...validProjects.values(), ...invalidProjects.values()]
+    .map((project) => project.slug)
+    .filter(Boolean));
+  const existingIds = new Set([...validProjects.keys(), ...invalidProjects.keys()]);
 
   // Stable thread-ID order (snowflake ascending) so slug allocation is deterministic.
   const ordered = [...candidates].sort((a, b) => {
@@ -173,6 +240,7 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
       threadId: candidate.threadId,
       disposition: null,
       eligibility: candidate.eligibility || null,
+      expectedThread: candidate.expectedThread || null,
       metadata: null,
       plannedProjectId: null,
       slug: null,
@@ -181,18 +249,25 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
       reason: null,
     };
 
-    const existing = candidate.thread.projectId != null
-      ? existingProjects.find((project) => project.projectId === candidate.thread.projectId)
-      : undefined;
+    const linkedKey = candidate.thread.projectId != null ? candidate.thread.projectId : null;
 
-    if (candidate.thread.projectId != null && !existing) {
+    if (linkedKey != null && !validProjects.has(linkedKey) && !invalidProjects.has(linkedKey)) {
       record.disposition = 'conflict';
-      record.reason = `thread.projectId ${candidate.thread.projectId} points at a missing Project (dangling link)`;
+      record.reason = `thread.projectId ${linkedKey} points at a missing Project (dangling link)`;
       plans.push(record);
       continue;
     }
 
-    if (existing) {
+    if (linkedKey != null && invalidProjects.has(linkedKey)) {
+      record.disposition = 'conflict';
+      record.reason = `linked Project ${linkedKey} is malformed: ${invalidProjects.get(linkedKey)}`;
+      record.plannedProjectId = linkedKey;
+      plans.push(record);
+      continue;
+    }
+
+    if (linkedKey != null) {
+      const existing = validProjects.get(linkedKey);
       const inconsistent = [];
       if (existing.profileThreadId !== candidate.threadId) {
         inconsistent.push(`profileThreadId ${existing.profileThreadId} does not point back at this thread`);
@@ -206,22 +281,29 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
       if (inconsistent.length) {
         record.disposition = 'conflict';
         record.reason = inconsistent.join('; ');
-        record.plannedProjectId = existing.projectId;
+        record.plannedProjectId = linkedKey;
         plans.push(record);
         continue;
       }
       record.disposition = 'already-linked';
-      record.plannedProjectId = existing.projectId;
+      record.plannedProjectId = linkedKey;
       record.slug = existing.slug;
       plans.push(record);
       continue;
     }
 
-    const claimedBy = projectByLinkedThreadId.get(candidate.threadId);
-    if (claimedBy) {
+    // No backlink on the thread. Any valid Project claiming this thread as its profile
+    // thread is a contradictory mapping; a malformed claimant is still reported as a
+    // conflict on this thread rather than silently ignored.
+    const claimants = profileClaims.get(candidate.threadId) || [];
+    const invalidClaimants = [...invalidProjects.entries()]
+      .filter(([, issue]) => issue.includes(`profile thread ${candidate.threadId} is claimed`))
+      .map(([projectId]) => projectId);
+    if (claimants.length || invalidClaimants.length) {
       record.disposition = 'conflict';
-      record.reason = `Project ${claimedBy.projectId} claims this thread as its profile thread while the thread has no backlink`;
-      record.plannedProjectId = claimedBy.projectId;
+      const who = claimants.length ? claimants.join(', ') : invalidClaimants.join(', ');
+      record.reason = `Project(s) ${who} claim this thread as their profile thread while the thread has no backlink`;
+      record.plannedProjectId = claimants[0] ?? invalidClaimants[0] ?? null;
       plans.push(record);
       continue;
     }
@@ -245,6 +327,14 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
     }
 
     const plannedProjectId = allocateProjectId(candidate);
+    if (existingIds.has(plannedProjectId)) {
+      record.disposition = 'conflict';
+      record.plannedProjectId = plannedProjectId;
+      record.reason = 'planned Project id is already occupied by an existing Project';
+      plans.push(record);
+      continue;
+    }
+
     const base = slugifyBase(candidate.title);
     const slug = resolveSlug({ base, projectId: plannedProjectId, taken: takenSlugs });
     if (!slug) {
@@ -255,18 +345,43 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
       continue;
     }
 
+    // Full Phase 2 contract validation in preflight (F10): any defect — including an
+    // unrecognised status value that slipped past deriveProjectStatus — blocks the
+    // record here, before a single transaction can commit.
+    let project;
+    try {
+      project = buildMigrationProjectRecord({
+        projectId: plannedProjectId,
+        ownerId: candidate.ownerId,
+        title: candidate.title,
+        slug,
+        summary: candidate.summary,
+        status: statusDerivation.status,
+        projectUrl: candidate.projectUrl ?? null,
+        platforms: candidate.platforms,
+        profileThreadId: candidate.threadId,
+        timestamp: 'preflight',
+      });
+    } catch (err) {
+      record.disposition = 'blocked';
+      record.plannedProjectId = plannedProjectId;
+      record.blockers = [{ field: 'record', reason: err.message, provenance: 'Phase 2 project contract' }];
+      plans.push(record);
+      continue;
+    }
+
     record.disposition = 'create';
     record.plannedProjectId = plannedProjectId;
     record.slug = slug;
     record.metadata = {
-      ownerId: candidate.ownerId,
-      title: candidate.title,
-      slug,
-      summary: candidate.summary,
-      status: statusDerivation.status,
-      projectUrl: candidate.projectUrl ?? null,
-      platforms: candidate.platforms,
-      profileThreadId: candidate.threadId,
+      ownerId: project.ownerId,
+      title: project.title,
+      slug: project.slug,
+      summary: project.summary,
+      status: project.status,
+      projectUrl: project.projectUrl,
+      platforms: project.platforms,
+      profileThreadId: project.profileThreadId,
     };
     takenSlugs.add(slug);
     plans.push(record);
@@ -285,10 +400,13 @@ export function planMigration({ candidates, existingProjects, allocateProjectId,
 
 // ---------- transactional apply ----------
 
+const sameField = (a, b) => (a ?? null) === (b ?? null);
+
 // One record = one transaction: the Project doc is created and the original thread's
 // projectId backlink is written atomically. All validation happens inside the
-// transaction against freshly read state, so a concurrent attempt (or state changed
-// after planning) fails closed instead of duplicating a Project.
+// transaction against freshly read state. Scope (F6): this guards exactly the
+// (thread, planned Project) pair — see the module header for the concurrent-writer
+// precondition it deliberately does not cover.
 export async function applyMigrationRecordTransaction({
   transaction, threadRef, projectRef, planRecord, timestamp,
 }) {
@@ -297,12 +415,30 @@ export async function applyMigrationRecordTransaction({
   if (projectSnap.exists) throw new Error(`planned Project id ${planRecord.plannedProjectId} is already occupied`);
 
   const thread = threadSnap.data();
-  if (thread.projectId != null && thread.projectId !== planRecord.plannedProjectId) {
-    throw new Error(`thread ${planRecord.threadId} is already linked to Project ${thread.projectId}`);
+  // A create was planned against a null backlink: ANY non-null projectId now — even one
+  // equal to the planned id — means state changed since planning and must not be
+  // silently repaired or accepted (F8).
+  if (thread.projectId != null) {
+    throw new Error(`thread ${planRecord.threadId} gained a Project link (${thread.projectId}) after planning; refusing to create`);
+  }
+  // Stale Firestore-side state fails closed (F7): the source fields the metadata was
+  // derived from must be unchanged, and the owner must still be present and identical.
+  if (!planRecord.expectedThread) {
+    throw new Error(`plan record for ${planRecord.threadId} lacks the expectedThread snapshot; refusing to apply`);
+  }
+  const expected = planRecord.expectedThread;
+  if (!sameField(thread.mode, expected.mode)) {
+    throw new Error(`thread ${planRecord.threadId} mode changed since planning (${thread.mode} vs ${expected.mode})`);
+  }
+  if (!sameField(thread.forumId, expected.forumId)) {
+    throw new Error(`thread ${planRecord.threadId} source forum changed since planning (${thread.forumId} vs ${expected.forumId})`);
+  }
+  if (!sameField(thread.projectUrl, expected.projectUrl)) {
+    throw new Error(`thread ${planRecord.threadId} projectUrl changed since planning`);
   }
   const ownerId = assertDiscordId(planRecord.metadata.ownerId, 'owner ID');
-  if (thread.ownerId != null && thread.ownerId !== ownerId) {
-    throw new Error(`thread ${planRecord.threadId} owner changed since planning`);
+  if (thread.ownerId == null || thread.ownerId !== ownerId) {
+    throw new Error(`thread ${planRecord.threadId} owner changed since planning (${thread.ownerId})`);
   }
 
   const project = buildMigrationProjectRecord({

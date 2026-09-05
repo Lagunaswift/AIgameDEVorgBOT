@@ -15,6 +15,8 @@
 // Anything else (unknown tag ids, missing starter messages) is a caller-level failure
 // and deliberately stays out of this decision.
 
+import { pathToFileURL } from 'node:url';
+
 export const DISCORD_SNOWFLAKE_RE = /^\d{17,20}$/;
 
 // Strips the markdown constructs called out in the data contract: custom emoji tags,
@@ -91,7 +93,7 @@ export function checkShowcaseEligibility({ channel, firestoreData, sourceForumId
   return { status: 'ok', forumId };
 }
 
-// Resolves a forum's available tags into an id -> {name, emojiId, emojiName} map.
+// Exports a forum's available tags into an id -> {name, emojiId, emojiName} map.
 // Throws when the forum is missing its tag list or returns a malformed tag, so no
 // caller ever guesses what an unknown tag id meant.
 export async function getForumTagMap(rest, forumId, cache) {
@@ -109,4 +111,17 @@ export async function getForumTagMap(rest, forumId, cache) {
   }
   cache.set(forumId, map);
   return map;
+}
+
+// True when a module is being executed directly (node scripts/foo.mjs) rather than
+// imported. Uses pathToFileURL, which correctly encodes reserved path characters
+// (#, %, ?) that a hand-built file:// URL would silently truncate on — a path
+// containing those must not disable the script's main() by accident.
+export function isDirectRun(argv1, moduleUrl) {
+  if (!argv1) return false;
+  try {
+    return pathToFileURL(argv1).href === moduleUrl;
+  } catch {
+    return false;
+  }
 }

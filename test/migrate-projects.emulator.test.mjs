@@ -29,7 +29,7 @@ test('transaction apply against the Firestore emulator', { skip: emulatorHost ? 
   const threadRef = db.collection('threads').doc(THREAD);
   const projectRef = db.collection('projects').doc(PROJECT_ID);
   await threadRef.set({
-    threadId: THREAD, ownerId: OWNER, mode: 'showcase',
+    threadId: THREAD, ownerId: OWNER, mode: 'showcase', forumId: '1051088980176805920',
     projectId: null, purpose: null, createdAt: 'then', registeredAt: 'then',
   });
   t.after(async () => {
@@ -43,6 +43,8 @@ test('transaction apply against the Firestore emulator', { skip: emulatorHost ? 
     disposition: 'create',
     plannedProjectId: PROJECT_ID,
     slug: 'emulator-game',
+    eligibility: { forumId: '1051088980176805920', consentTag: true },
+    expectedThread: { mode: 'showcase', forumId: '1051088980176805920', projectUrl: null },
     metadata: {
       ownerId: OWNER, title: 'Emulator Game', slug: 'emulator-game',
       summary: 'An emulator-verified game.', status: 'development',
@@ -68,6 +70,6 @@ test('transaction apply against the Firestore emulator', { skip: emulatorHost ? 
     db.runTransaction((transaction) => applyMigrationRecordTransaction({
       transaction, threadRef, projectRef, planRecord, timestamp: 'later',
     })),
-    /already linked|already occupied/,
+    /already linked|already occupied|gained a Project link/,
   );
 });

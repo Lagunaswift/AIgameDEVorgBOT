@@ -17,12 +17,33 @@ backlink — Project creation and backlink in one Firestore transaction.
 - **Dry run is read-only.** Discord REST reads + Firestore reads only.
 - **Idempotent.** A consistent existing Project↔thread relationship is a no-op on
   rerun; the migration never republishes, overwrites, or "repairs" existing records.
+  A create planned against a null backlink is refused if the thread gained ANY Project
+  link after planning — changed state is never silently accepted.
 - **Fail closed.** Any blocked record (missing/inferred-impossible metadata, e.g.
   `status` which has no structured source yet) or conflict (dangling links, owner
-  mismatches, occupied slugs/ids) refuses the entire apply.
-- **Nothing private becomes public.** Threads without the Publish-to-site tag are
-  excluded without their content ever being read.
+  mismatches, malformed or duplicate-claim existing Projects, occupied slugs/ids)
+  refuses the entire apply. The full Phase 2 Project contract is validated in
+  preflight, not just inside the transaction.
+- **Plan stability.** Apply replays the reviewed plan's Project ids during its fresh
+  preflight, so unchanged live state compares equal instead of false-drifting on
+  regenerated ids. The approval is also bound to the reviewed plan's Firebase target
+  and `SITE_PUBLISH_TAG_ID` — a plan reviewed against a different environment or tag
+  is not this approval.
+- **Nothing private becomes public.** Threads without the Publish-to-site tag (or in a
+  different guild) are excluded without their content ever being read. A
+  consent-tagged thread whose starter message cannot be read is a completeness
+  blocker, never a silent skip.
 - **Scoring identity untouched.** The only thread write is `projectId`.
+
+## Operational preconditions (enforced by the operator, not the code)
+
+- **No concurrent Project writers during apply.** Each transaction guards exactly its
+  (thread, planned Project) pair; it cannot detect a competing slug or profile-thread
+  claim introduced between preflight and commit. While `--apply` runs, nothing else
+  may create or edit Project records.
+- Live consent is rechecked immediately before each transaction (full boundary:
+  channel exists, parent forum unchanged, publish tag applied, guild matches), but
+  Firestore transactions cannot be atomic with Discord state.
 
 ## Steps
 
@@ -60,10 +81,13 @@ npm run migrate:projects -- --apply \
   --database '(default)'
 ```
 
-The apply re-runs the full preflight live, requires it to still match the reviewed plan
-exactly (stale plans abort), re-checks Publish-to-site consent immediately before each
-record's transaction, and commits records sequentially. On failure it **stops**, prints
-the already-committed records, and writes `.migration/apply-failed-<timestamp>.json`.
+The apply re-runs the full preflight live — replaying the reviewed plan's Project ids
+and requiring the fresh plan to match the reviewed one exactly (dispositions, ids,
+slugs, metadata, and the Firestore source-field snapshot per record) — then re-checks
+the full consent boundary immediately before each record's transaction and commits
+records sequentially. On ANY failure (consent loss, REST error, transaction rejection)
+it stops and writes `.migration/apply-failed-<timestamp>.json` listing every record
+that already committed.
 
 ### 3. Verify
 

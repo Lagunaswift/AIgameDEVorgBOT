@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import {
   checkShowcaseEligibility,
   extractText,
   getForumTagMap,
+  isDirectRun,
   isMissingResource,
   stripMarkdown,
   truncate,
@@ -126,4 +128,16 @@ test('getForumTagMap resolves tag ids and rejects malformed forums', async () =>
     getForumTagMap({ get: async () => ({ available_tags: [{ id: 'x' }] }) }, '111', new Map()),
     /malformed tag/,
   );
+});
+
+test('isDirectRun handles reserved path characters and mismatches', () => {
+  // Reserved characters (#, %, ?) must encode correctly instead of silently disabling
+  // the script's main() when invoked from such a path.
+  for (const tricky of ['C:\\dir with space\\a.mjs', 'C:\\dir#a\\a.mjs', 'C:\\dir%20x\\a.mjs', 'C:\\dir?a\\a.mjs', '/tmp/we #ird/x.mjs']) {
+    const url = pathToFileURL(tricky).href;
+    assert.equal(isDirectRun(tricky, url), true, `direct run detected for ${tricky}`);
+    assert.equal(isDirectRun(tricky, 'file:///other.mjs'), false, `import not treated as direct run for ${tricky}`);
+  }
+  assert.equal(isDirectRun(null, 'file:///x.mjs'), false);
+  assert.equal(isDirectRun(undefined, 'file:///x.mjs'), false);
 });

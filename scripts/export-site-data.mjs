@@ -28,6 +28,7 @@ import {
   getChannel,
   getForumTagMap,
   getStarterMessage,
+  isDirectRun,
   isMissingResource,
   truncate,
 } from './site-export-shared.mjs';
@@ -339,7 +340,8 @@ async function processShowcaseThread(docSnap, ctx) {
     return null;
   }
 
-  const tagMap = await getForumTagMap(rest, forumId, forumTagCache);
+  // Eligible from here: the shared decision carries the verified forum id.
+  const tagMap = await getForumTagMap(rest, eligibility.forumId, forumTagCache);
   const appliedTags = channel.applied_tags.map((id) => {
     const tag = tagMap.get(id);
     if (!tag) throw new Error(`showcase thread ${threadId} has an unknown tag ${id}`);
@@ -699,7 +701,13 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`[export] fatal: ${err.message}`);
-  process.exitCode = 1;
-});
+export { processShowcaseThread };
+
+// Run only when executed directly (isDirectRun encodes reserved path characters
+// like #, %, ? correctly — see site-export-shared.mjs).
+if (isDirectRun(process.argv[1], import.meta.url)) {
+  main().catch((err) => {
+    console.error(`[export] fatal: ${err.message}`);
+    process.exitCode = 1;
+  });
+}

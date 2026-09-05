@@ -7,6 +7,7 @@ import admin from 'firebase-admin';
 import { config } from './config.js';
 
 let db = null;
+let firebaseProjectId = null;
 
 function parseServiceAccount(raw) {
   let parsed;
@@ -28,6 +29,10 @@ export function initFirebase() {
   if (db) return db;
 
   const serviceAccount = parseServiceAccount(config.firebaseServiceAccount);
+  if (!serviceAccount.project_id) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT is missing project_id');
+  }
+  firebaseProjectId = serviceAccount.project_id;
 
   if (admin.apps.length === 0) {
     admin.initializeApp({
@@ -45,6 +50,16 @@ export function getDb() {
     throw new Error('Firestore not initialised. Call initFirebase() first.');
   }
   return db;
+}
+
+// The Firebase project id from the initialised service-account credential. Used by
+// operator scripts to display/verify the target they are about to write to — never
+// derived from non-public SDK internals.
+export function getFirebaseProjectId() {
+  if (!firebaseProjectId) {
+    throw new Error('Firestore not initialised. Call initFirebase() first.');
+  }
+  return firebaseProjectId;
 }
 
 // Re-export the server timestamp + field-value helpers so callers don't import admin directly.
