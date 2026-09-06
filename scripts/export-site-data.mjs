@@ -1,4 +1,4 @@
-// Exports showcase + jam data from Discord/Firestore into the Astro site's data files.
+// Exports Showcase, Project, and jam data from Discord/Firestore into the Astro site.
 //
 // Reads Discord state over REST only (no gateway login) using the bot token, so this can
 // run as a one-off script or a scheduled job without holding a live connection. Firestore
@@ -21,8 +21,15 @@ import {
   readJson,
   removeStaleAssets,
 } from './site-export-safety.mjs';
-import { buildPublicGame } from './site-export-contract.mjs';
 import {
+  buildPublicGame,
+  finalizeProjectExport,
+  normalizeOptionalText,
+  normalizeProjectActivity,
+  prepareProjectExports,
+} from './site-export-contract.mjs';
+import {
+  DISCORD_SNOWFLAKE_RE,
   checkShowcaseEligibility,
   extractText,
   getChannel,
@@ -40,6 +47,8 @@ const CONTENT_TYPE_EXT = {
   'image/webp': 'webp',
   'image/gif': 'gif',
 };
+const PUBLIC_DISCORD_THREAD_TYPES = new Set([10, 11]);
+const PROJECT_GENERATED_DIR = '_discord-export';
 
 // ---------- CLI args ----------
 
@@ -94,6 +103,9 @@ function validateEnv(args) {
       `export-site-data: missing required value(s): ${missing.join(', ')}`,
     );
   }
+  if (!DISCORD_SNOWFLAKE_RE.test(config.guildId)) {
+    throw new Error('export-site-data: GUILD_ID must be a Discord snowflake');
+  }
   return parsePublishTagId(process.env.SITE_PUBLISH_TAG_ID);
 }
 
@@ -137,7 +149,17 @@ const OPTIMIZED_QUALITY = 78;
 // card width and re-encoded as webp (animation preserved for gifs). Falls back to the
 // original bytes only when its declared extension is safe to preserve. Removes stale
 // same-thread variants from earlier runs so extension changes never leave orphans.
-async function downloadOptimizedAttachment(url, destDir, baseName, fallbackExt) {
+async function downloadOptimizedAttachment(
+  url,
+  destDir,
+  baseName,
+  fallbackExt,
+  {
+    maxWidth = OPTIMIZED_MAX_WIDTH,
+    quality = OPTIMIZED_QUALITY,
+    allowOriginalFallback = true,
+  } = {},
+) {
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`image download failed (${res.status}) for ${url}`);
@@ -147,18 +169,31 @@ async function downloadOptimizedAttachment(url, destDir, baseName, fallbackExt) 
 
   let ext = 'webp';
   let out;
+  let width = null;
+  let height = null;
   try {
-    out = await sharp(buf, { animated: true })
-      .resize({ width: OPTIMIZED_MAX_WIDTH, withoutEnlargement: true })
-      .webp({ quality: OPTIMIZED_QUALITY })
-      .toBuffer();
+    const optimized = await sharp(buf, { animated: true })
+      .resize({ width: maxWidth, withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer({ resolveWithObject: true });
+    out = optimized.data;
+    width = optimized.info.width;
+    height = optimized.info.height;
   } catch (err) {
-    if (!fallbackExt) {
+    if (!fallbackExt || !allowOriginalFallback) {
       throw new Error(`unsupported image format for ${baseName}: ${err.message}`);
     }
     console.warn(`[export] optimization failed for ${baseName} (${err.message}) - keeping original`);
     ext = fallbackExt;
     out = buf;
+    try {
+      const metadata = await sharp(buf, { animated: true }).metadata();
+      width = metadata.width ?? null;
+      height = metadata.height ?? null;
+    } catch {
+      // Showcase cards do not need intrinsic dimensions. Project media validation below
+      // fails closed if an original cannot supply them.
+    }
   }
 
   for (const stale of IMAGE_EXTS) {
@@ -169,7 +204,7 @@ async function downloadOptimizedAttachment(url, destDir, baseName, fallbackExt) 
   }
 
   await fs.writeFile(path.join(destDir, `${baseName}.${ext}`), out);
-  return ext;
+  return { ext, width, height };
 }
 
 // ---------- Discord REST helpers ----------
@@ -297,10 +332,282 @@ async function buildFeedbackPointsMap(db) {
   return map;
 }
 
+// ---------- Projects flow ----------
+
+function threadDataFromDoc(doc, label) {
+  const data = doc && typeof doc.data === 'function' ? doc.data() : null;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error(`${label} has malformed Firestore data`);
+  }
+  return data;
+}
+
+function assertProjectSourceThread(doc, prepared, role) {
+  if (!doc) throw new Error(`Project ${prepared.id} ${role} is not a registered thread`);
+  const threadId = doc.id;
+  if (!DISCORD_SNOWFLAKE_RE.test(String(threadId || ''))) {
+    throw new Error(`Project ${prepared.id} ${role} has an invalid Discord thread ID`);
+  }
+  const data = threadDataFromDoc(doc, `Project ${prepared.id} ${role}`);
+  if (Object.hasOwn(data, 'threadId') && data.threadId !== threadId) {
+    throw new Error(`Project ${prepared.id} ${role} embedded threadId does not match document id ${threadId}`);
+  }
+  if (data.ownerId !== prepared.ownerId) {
+    throw new Error(`Project ${prepared.id} ${role} owner does not match the Project owner`);
+  }
+  if (data.projectId !== prepared.id) {
+    throw new Error(`Project ${prepared.id} ${role} is not exactly linked to this Project`);
+  }
+  if (!DISCORD_SNOWFLAKE_RE.test(String(data.forumId || ''))) {
+    throw new Error(`Project ${prepared.id} ${role} has no valid source forum ID`);
+  }
+  return { threadId, data };
+}
+
+async function getPublicProjectThread(rest, source, prepared, role, channelCache) {
+  if (channelCache.has(source.threadId)) return channelCache.get(source.threadId);
+  let channel;
+  try {
+    channel = await getChannel(rest, source.threadId);
+  } catch (err) {
+    if (isMissingResource(err)) {
+      throw new Error(`Project ${prepared.id} ${role} Discord thread is unavailable`);
+    }
+    throw err;
+  }
+  if (!channel || channel.id !== source.threadId) {
+    throw new Error(`Project ${prepared.id} ${role} returned the wrong Discord thread`);
+  }
+  if (channel.guild_id !== config.guildId) {
+    throw new Error(`Project ${prepared.id} ${role} is outside the configured guild`);
+  }
+  if (!PUBLIC_DISCORD_THREAD_TYPES.has(channel.type)) {
+    throw new Error(`Project ${prepared.id} ${role} is not a public Discord thread`);
+  }
+  if (channel.parent_id !== source.data.forumId) {
+    throw new Error(`Project ${prepared.id} ${role} source forum does not match registration`);
+  }
+  if (channel.owner_id !== prepared.ownerId) {
+    throw new Error(`Project ${prepared.id} ${role} live Discord owner does not match the Project owner`);
+  }
+  channelCache.set(source.threadId, channel);
+  return channel;
+}
+
+function attachmentAltText(attachment, prepared, channel) {
+  const supplied = typeof attachment.description === 'string' ? attachment.description.trim() : '';
+  if (supplied && supplied.length <= 240) return supplied;
+  const channelName = typeof channel.name === 'string' && channel.name.trim()
+    ? channel.name.trim()
+    : 'project image';
+  return truncate(`${prepared.project.title}: ${channelName}`, 240);
+}
+
+async function buildProjectImage({
+  rest,
+  threadDocsById,
+  prepared,
+  threadId,
+  role,
+  baseName,
+  optional,
+  args,
+  channelCache,
+  downloadAttachment,
+}) {
+  const source = assertProjectSourceThread(threadDocsById.get(threadId), prepared, role);
+  const channel = await getPublicProjectThread(rest, source, prepared, role, channelCache);
+  const starterMessage = await getStarterMessage(rest, threadId);
+  if (starterMessage?.author?.id && starterMessage.author.id !== prepared.ownerId) {
+    throw new Error(`Project ${prepared.id} ${role} starter message owner does not match the Project owner`);
+  }
+
+  let attachment = starterMessage?.author?.id === prepared.ownerId
+    ? findImageAttachment(starterMessage)
+    : null;
+  if (!attachment) attachment = await findOwnerFallbackImage(rest, threadId, prepared.ownerId);
+  if (!attachment) {
+    if (optional) return { media: null, asset: null };
+    throw new Error(`Project ${prepared.id} ${role} has no owner-authored image`);
+  }
+  if (args.dryRun) return { media: null, asset: null };
+
+  const destDir = path.join(
+    args.out,
+    'public',
+    'assets',
+    'projects',
+    prepared.project.slug,
+    PROJECT_GENERATED_DIR,
+  );
+  const result = await downloadAttachment(
+    attachment.url,
+    destDir,
+    baseName,
+    resolveImageExt(attachment),
+    { maxWidth: 1600, quality: 82, allowOriginalFallback: false },
+  );
+  const src = `/assets/projects/${prepared.project.slug}/${PROJECT_GENERATED_DIR}/${baseName}.${result.ext}`;
+  return {
+    asset: src,
+    media: {
+      kind: 'image',
+      src,
+      alt: attachmentAltText(attachment, prepared, channel),
+      width: result.width,
+      height: result.height,
+      caption: null,
+    },
+  };
+}
+
+function buildActivityGroups(threadDocs, publishedById) {
+  const groups = new Map();
+  for (const doc of threadDocs) {
+    const data = doc && typeof doc.data === 'function' ? doc.data() : null;
+    // Malformed records cannot carry exact publication consent. Ignore them unless a
+    // Project references them directly, in which case the source validator fails closed.
+    if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+    if (data.publishOnProject !== true) continue;
+    const prepared = publishedById.get(data.projectId);
+    // A Thread flag cannot publish its parent Project. Leave activities attached to an
+    // unpublished Project private without reading their Discord channel.
+    if (!prepared) continue;
+    if (!['feedback', 'project-update', 'jam-entry'].includes(data.purpose)) {
+      throw new Error(`Project ${prepared.id} activity thread ${doc.id} has an invalid purpose`);
+    }
+    assertProjectSourceThread(doc, prepared, `activity thread ${doc.id}`);
+    const group = groups.get(prepared.id) || [];
+    group.push(doc);
+    groups.set(prepared.id, group);
+  }
+  return groups;
+}
+
+export async function runProjectsFlow(
+  rest,
+  db,
+  preparedProjects,
+  args,
+  { downloadAttachment = downloadOptimizedAttachment } = {},
+) {
+  const threadsSnap = await db.collection('threads').get();
+  const threadDocs = threadsSnap.docs || [];
+  const threadDocsById = new Map(threadDocs.map((doc) => [doc.id, doc]));
+  const publishedById = new Map(preparedProjects.map((prepared) => [prepared.id, prepared]));
+  const activityGroups = buildActivityGroups(threadDocs, publishedById);
+  const channelCache = new Map();
+  const projects = [];
+  const generatedAssets = [];
+
+  for (const prepared of preparedProjects) {
+    const derivedActivities = [];
+    for (const doc of activityGroups.get(prepared.id) || []) {
+      const source = assertProjectSourceThread(doc, prepared, `activity thread ${doc.id}`);
+      const channel = await getPublicProjectThread(
+        rest,
+        source,
+        prepared,
+        `activity thread ${doc.id}`,
+        channelCache,
+      );
+      const activityTitle = normalizeOptionalText(
+        source.data.activityTitle,
+        `Project ${prepared.id} activity thread ${doc.id} activityTitle`,
+        160,
+      );
+      const fallbackTitle = truncate((channel.name || '').trim(), 160);
+      derivedActivities.push(normalizeProjectActivity({
+        type: source.data.purpose,
+        title: activityTitle ?? fallbackTitle,
+        date: resolveCreatedAt(channel, source.data, source.threadId),
+        summary: normalizeOptionalText(
+          source.data.activitySummary,
+          `Project ${prepared.id} activity thread ${doc.id} activitySummary`,
+          500,
+        ),
+        url: `https://discord.com/channels/${config.guildId}/${source.threadId}`,
+      }, `Project ${prepared.id} activity thread ${doc.id}`));
+    }
+
+    let hero = null;
+    if (prepared.profileThreadId) {
+      const result = await buildProjectImage({
+        rest,
+        threadDocsById,
+        prepared,
+        threadId: prepared.profileThreadId,
+        role: 'profile thread',
+        baseName: 'hero',
+        optional: true,
+        args,
+        channelCache,
+        downloadAttachment,
+      });
+      hero = result.media;
+      if (result.asset) generatedAssets.push(result.asset);
+    }
+
+    const media = [];
+    for (const [index, threadId] of prepared.mediaThreadIds.entries()) {
+      const result = await buildProjectImage({
+        rest,
+        threadDocsById,
+        prepared,
+        threadId,
+        role: `media thread ${index + 1}`,
+        baseName: `media-${String(index + 1).padStart(2, '0')}`,
+        optional: false,
+        args,
+        channelCache,
+        downloadAttachment,
+      });
+      if (result.media) media.push(result.media);
+      if (result.asset) generatedAssets.push(result.asset);
+    }
+
+    projects.push(finalizeProjectExport(prepared, { hero, media, derivedActivities }));
+  }
+
+  return { projects, generatedAssets };
+}
+
+function resolveShowcaseProjectFields(data, channel, threadId, projectsById) {
+  const activityTitle = normalizeOptionalText(data.activityTitle, `thread ${threadId} activityTitle`, 160);
+  if (data.projectId == null) {
+    return { activityTitle, projectId: null, projectSlug: null, state: null };
+  }
+
+  const record = projectsById?.get(data.projectId);
+  if (!record) throw new Error(`showcase thread ${threadId} links to a missing Project ${data.projectId}`);
+  if (!record.prepared || record.data.publishToSite !== true) {
+    return { activityTitle, projectId: null, projectSlug: null, state: null };
+  }
+  if (data.ownerId !== record.prepared.ownerId) {
+    throw new Error(`showcase thread ${threadId} owner does not match Project ${data.projectId}`);
+  }
+  if (channel.owner_id !== record.prepared.ownerId) {
+    throw new Error(`showcase thread ${threadId} live owner does not match Project ${data.projectId}`);
+  }
+  const archived = channel.thread_metadata?.archived;
+  if (typeof archived !== 'boolean') {
+    throw new Error(`showcase thread ${threadId} did not return an explicit archived state`);
+  }
+  return {
+    activityTitle,
+    projectId: record.id,
+    projectSlug: record.prepared.project.slug,
+    state: archived ? 'archived' : 'open',
+  };
+}
+
 // ---------- showcase flow ----------
 
 async function processShowcaseThread(docSnap, ctx) {
-  const { rest, forumTagCache, pointsMap, dryRun, outDir, publishTagId, sourceForumIds, withheldIds } = ctx;
+  const {
+    rest, forumTagCache, pointsMap, dryRun, outDir, publishTagId, sourceForumIds,
+    withheldIds, projectsById,
+  } = ctx;
   const threadId = docSnap.id;
   const data = docSnap.data();
 
@@ -339,6 +646,7 @@ async function processShowcaseThread(docSnap, ctx) {
     withheldIds.add(threadId);
     return null;
   }
+  const projectFields = resolveShowcaseProjectFields(data, channel, threadId, projectsById);
 
   // Eligible from here: the shared decision carries the verified forum id.
   const tagMap = await getForumTagMap(rest, eligibility.forumId, forumTagCache);
@@ -368,7 +676,7 @@ async function processShowcaseThread(docSnap, ctx) {
     let ext = 'webp';
     if (!dryRun) {
       const destDir = path.join(outDir, 'public', 'assets', 'showcase');
-      ext = await downloadOptimizedAttachment(att.url, destDir, threadId, resolveImageExt(att));
+      ({ ext } = await downloadOptimizedAttachment(att.url, destDir, threadId, resolveImageExt(att)));
     }
     if (ext) {
       hasImage = true;
@@ -397,13 +705,14 @@ async function processShowcaseThread(docSnap, ctx) {
       award,
       projectUrl: data.projectUrl ?? null,
       jamId: data.jamId ?? null,
+      ...projectFields,
     }),
     hasImage,
     recovered,
   };
 }
 
-async function runShowcaseFlow(rest, db, args) {
+async function runShowcaseFlow(rest, db, args, projectsById) {
   const pointsMap = await buildFeedbackPointsMap(db);
   const threadsSnap = await db.collection('threads').where('mode', '==', 'showcase').get();
   let threadDocs = threadsSnap.docs;
@@ -453,6 +762,7 @@ async function runShowcaseFlow(rest, db, args) {
       publishTagId: args.publishTagId,
       sourceForumIds,
       withheldIds,
+      projectsById,
     });
     if (!result) continue;
     games.push(result.game);
@@ -572,7 +882,14 @@ async function writeJson(outDir, fileName, payload) {
     if (err.code !== 'ENOENT') throw err;
   }
   const stablePayload = preserveGeneratedAtIfUnchanged(previous, payload);
-  await fs.writeFile(filePath, `${JSON.stringify(stablePayload, null, 2)}\n`);
+  const tempPath = `${filePath}.${process.pid}.tmp`;
+  try {
+    await fs.writeFile(tempPath, `${JSON.stringify(stablePayload, null, 2)}\n`);
+    await fs.rename(tempPath, filePath);
+  } catch (err) {
+    await fs.rm(tempPath, { force: true });
+    throw err;
+  }
   return filePath;
 }
 
@@ -588,6 +905,35 @@ async function cleanExportAssets(outDir, games) {
     .map((game) => game.award.emoji);
   await removeStaleAssets(path.join(outDir, 'public', 'assets', 'showcase'), showcaseAssets);
   await removeStaleAssets(path.join(outDir, 'public', 'assets', 'awards'), awardAssets);
+}
+
+export async function cleanProjectAssets(outDir, referencedPaths) {
+  const root = path.join(outDir, 'public', 'assets', 'projects');
+  await fs.mkdir(root, { recursive: true });
+  const bySlug = new Map();
+  for (const assetPath of referencedPaths) {
+    const match = /^\/assets\/projects\/([a-z0-9]+(?:-[a-z0-9]+)*)\/_discord-export\/([^/]+)$/.exec(assetPath);
+    if (!match) throw new Error(`generated Project asset has an unsafe path: ${assetPath}`);
+    const paths = bySlug.get(match[1]) || [];
+    paths.push(assetPath);
+    bySlug.set(match[1], paths);
+  }
+
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const generatedDir = path.join(root, entry.name, PROJECT_GENERATED_DIR);
+    let generatedStat;
+    try {
+      generatedStat = await fs.lstat(generatedDir);
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      throw err;
+    }
+    if (!generatedStat.isDirectory() || generatedStat.isSymbolicLink()) {
+      throw new Error(`Project generated asset namespace is not a directory: ${generatedDir}`);
+    }
+    await removeStaleAssets(generatedDir, bySlug.get(entry.name) || []);
+  }
 }
 
 // ---------- org stats ----------
@@ -606,9 +952,10 @@ async function fetchGuildMemberCount(rest, guildId) {
 
 // ---------- summary ----------
 
-function printSummary({ games, missingScreenshots, recoveredCount, jams, jamsRequested, filesWritten, dryRun }) {
+function printSummary({ projects, games, missingScreenshots, recoveredCount, jams, jamsRequested, filesWritten, dryRun }) {
   console.log('');
   console.log('=== export-site-data summary ===');
+  console.log(`Projects exported: ${projects.length}`);
   console.log(`Games exported: ${games.length}`);
   if (missingScreenshots.length) {
     console.log(`Games missing screenshots (${missingScreenshots.length}):`);
@@ -643,8 +990,17 @@ async function main() {
   const db = getDb();
   const rest = new REST({ version: '10' }).setToken(config.discordToken);
 
+  const projectsSnap = await db.collection('projects').get();
+  const preparedProjects = prepareProjectExports(projectsSnap.docs);
+  const { projects, generatedAssets } = await runProjectsFlow(
+    rest,
+    db,
+    preparedProjects.published,
+    args,
+  );
+
   const { games, missingScreenshots, recoveredCount, totalFeedbackPoints, withheldIds } =
-    await runShowcaseFlow(rest, db, args);
+    await runShowcaseFlow(rest, db, args, preparedProjects.allById);
 
   const memberCount = await fetchGuildMemberCount(rest, config.guildId);
   const stats = {
@@ -656,36 +1012,49 @@ async function main() {
     `Org stats: members=${memberCount ?? 'unavailable'}, projects=${games.length}, feedbackPoints=${totalFeedbackPoints}`,
   );
 
-  const filesWritten = [];
-  if (!args.dryRun) {
-    await writeReport(args.report, { version: 1, withheldIds });
-    filesWritten.push(args.report);
-    const showcasePath = await writeJson(args.out, 'showcase.json', {
-      version: 2,
-      generatedAt: new Date().toISOString(),
-      guildId: config.guildId,
-      stats,
-      games,
-    });
-    filesWritten.push(showcasePath);
-    await cleanExportAssets(args.out, games);
-  }
-
   const jamsRequested = args.jamsForum.length > 0;
   let jams = [];
   if (jamsRequested) {
     jams = await runJamsFlow(rest, args.jamsForum);
-    if (!args.dryRun) {
-      const jamsPath = await writeJson(args.out, 'jams.json', {
+  }
+
+  // Finish every external read and contract transformation before replacing any JSON
+  // snapshot. Each file is then written via a same-directory temp file and atomic rename;
+  // the workflow's staging clone is the all-files promotion boundary.
+  const filesWritten = [];
+  if (!args.dryRun) {
+    const generatedAt = new Date().toISOString();
+    await cleanExportAssets(args.out, games);
+    await cleanProjectAssets(args.out, generatedAssets);
+    const unpublishedProjectIds = [...preparedProjects.allById.values()]
+      .filter(({ data }) => data.publishToSite !== true)
+      .map(({ id }) => id)
+      .sort();
+    await writeReport(args.report, { version: 1, withheldIds, unpublishedProjectIds });
+    filesWritten.push(args.report);
+    filesWritten.push(await writeJson(args.out, 'projects.json', {
+      version: 1,
+      generatedAt,
+      projects,
+    }));
+    filesWritten.push(await writeJson(args.out, 'showcase.json', {
+      version: 2,
+      generatedAt,
+      guildId: config.guildId,
+      stats,
+      games,
+    }));
+    if (jamsRequested) {
+      filesWritten.push(await writeJson(args.out, 'jams.json', {
         version: 2,
-        generatedAt: new Date().toISOString(),
+        generatedAt,
         jams,
-      });
-      filesWritten.push(jamsPath);
+      }));
     }
   }
 
   printSummary({
+    projects,
     games,
     missingScreenshots,
     recoveredCount,
@@ -695,7 +1064,7 @@ async function main() {
     dryRun: args.dryRun,
   });
 
-  const exportedNothing = games.length === 0 && (!jamsRequested || jams.length === 0);
+  const exportedNothing = projects.length === 0 && games.length === 0 && (!jamsRequested || jams.length === 0);
   if (exportedNothing) {
     process.exitCode = 1;
   }

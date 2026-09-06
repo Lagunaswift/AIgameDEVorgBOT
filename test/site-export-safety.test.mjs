@@ -10,6 +10,8 @@ import {
   preserveGeneratedAtIfUnchanged,
   removeStaleAssets,
   validateExportReport,
+  validateProjectLinks,
+  validateProjectsSnapshot,
   validateShowcaseSnapshot,
 } from '../scripts/site-export-safety.mjs';
 
@@ -21,6 +23,10 @@ const game = (id, overrides = {}) => ({
   needsFeedback: true,
   kind: 'project',
   jamId: null,
+  activityTitle: null,
+  projectId: null,
+  projectSlug: null,
+  state: null,
   projectUrl: null,
   ...overrides,
 });
@@ -28,6 +34,32 @@ const snapshot = (games, generatedAt = '2026-08-28T12:00:00.000Z') => ({
   version: 2,
   generatedAt,
   games,
+});
+
+const project = (overrides = {}) => ({
+  id: 'project-1',
+  slug: 'test-game',
+  title: 'Test Game',
+  creatorName: null,
+  summary: 'A game used for export tests.',
+  description: null,
+  status: 'playable',
+  projectUrl: 'https://example.com/game',
+  platforms: ['web'],
+  hero: null,
+  media: [],
+  links: [],
+  activities: [],
+  wiki: null,
+  createdAt: null,
+  updatedAt: null,
+  ...overrides,
+});
+
+const projectsSnapshot = (projects) => ({
+  version: 1,
+  generatedAt: '2026-09-06T10:00:00.000Z',
+  projects,
 });
 
 test('publication tag must be a Discord snowflake', () => {
@@ -110,6 +142,73 @@ test('snapshot rejects inconsistent jam and legacy feedback-marker semantics', (
   );
 });
 
+test('Project snapshots match the v1 limits and reject private or duplicate data atomically', () => {
+  assert.doesNotThrow(() => validateProjectsSnapshot(projectsSnapshot([project()])));
+  assert.throws(
+    () => validateProjectsSnapshot(projectsSnapshot([project({ ownerId: '123456789012345678' })])),
+    /private metadata/,
+  );
+  assert.throws(
+    () => validateProjectsSnapshot(projectsSnapshot([project({ internalNotes: 'private' })])),
+    /unsupported public field/,
+  );
+  assert.throws(
+    () => validateProjectsSnapshot(projectsSnapshot([project(), project({ id: 'project-2' })])),
+    /duplicate Project slug/,
+  );
+  assert.throws(
+    () => validateProjectsSnapshot(projectsSnapshot([project({ links: [{ type: 'play', label: 'Play', url: 'javascript:alert(1)', priority: 1 }] })])),
+    /link/,
+  );
+  assert.throws(
+    () => validateProjectsSnapshot(projectsSnapshot([project({ activities: Array.from({ length: 51 }, (_, index) => ({
+      type: 'build', title: `Build ${index}`, date: '2026-09-06T10:00:00.000Z', summary: null, url: `https://example.com/${index}`,
+    })) })])),
+    /at most 50 activities/,
+  );
+});
+
+test('cross-snapshot validation rejects dangling or stale Project relationships', () => {
+  const projects = projectsSnapshot([project()]);
+  const linked = snapshot([game('12345678901234567', {
+    projectId: 'project-1', projectSlug: 'test-game', state: 'open',
+  })]);
+  assert.doesNotThrow(() => validateProjectLinks(linked, projects));
+  assert.throws(
+    () => validateProjectLinks(snapshot([game('12345678901234567', {
+      projectId: 'missing', projectSlug: 'test-game', state: 'open',
+    })]), projects),
+    /dangling Project link/,
+  );
+  assert.throws(
+    () => validateProjectLinks(snapshot([game('12345678901234567', {
+      projectId: 'project-1', projectSlug: 'wrong-slug', state: 'open',
+    })]), projects),
+    /slug mismatch/,
+  );
+});
+
+test('a surviving Showcase item cannot lose or change its exact Project relationship', () => {
+  const previous = snapshot([game('12345678901234567', {
+    projectId: 'project-1', projectSlug: 'test-game', state: 'open',
+  })]);
+  assert.throws(
+    () => validateShowcaseSnapshot(snapshot([game('12345678901234567')]), previous),
+    /change its exact Project relationship/,
+  );
+  assert.doesNotThrow(() => validateShowcaseSnapshot(
+    snapshot([game('12345678901234567')]),
+    previous,
+    { version: 1, withheldIds: [], unpublishedProjectIds: ['project-1'] },
+  ));
+  assert.throws(
+    () => validateShowcaseSnapshot(snapshot([game('12345678901234567', {
+      projectId: 'project-2', projectSlug: 'other-game', state: 'open',
+    })]), previous),
+    /change its exact Project relationship/,
+  );
+});
+
 test('only explicitly opted-out or withheld prior projects may disappear', () => {
   const previous = snapshot([
     game('12345678901234567'),
@@ -129,6 +228,7 @@ test('only explicitly opted-out or withheld prior projects may disappear', () =>
 test('malformed export reports are rejected', () => {
   assert.throws(() => validateExportReport({ version: 1, withheldIds: ['not-a-snowflake'] }), /invalid withheld id/);
   assert.throws(() => validateExportReport({ version: 1, withheldIds: ['12345678901234567', '12345678901234567'] }), /duplicate withheld id/);
+  assert.throws(() => validateExportReport({ version: 1, withheldIds: [], unpublishedProjectIds: ['../private'] }), /invalid unpublished Project id/);
 });
 
 test('unchanged semantic snapshots retain generatedAt', () => {

@@ -73,7 +73,9 @@ just a query filtered by ISO week. Nothing is ever wiped.
 ```
 threadId, forumId, ownerId, ownerTag, title,
 mode: "showcase" | "competition", projectId: null | Project ID,
-purpose: null | "feedback" | "project-update" | "jam-entry", createdAt, registeredAt
+purpose: null | "feedback" | "project-update" | "jam-entry",
+publishOnProject: boolean, activityTitle: null | string,
+activitySummary: null | string, createdAt, registeredAt
 ```
 
 **`projects`** (doc id = generated `projectId`)
@@ -83,12 +85,44 @@ projectId, ownerId, title, slug, summary,
 status: "development" | "playable" | "released" | "paused",
 projectUrl: null | http(s) URL, platforms[], publishToSite,
 profileThreadId: null | registered Discord thread ID,
+mediaThreadIds: registered Discord thread IDs (optional, max 12),
+creatorName, description, links[], activities[], wiki (optional),
 createdAt, updatedAt
 ```
 
 Threads may link to one Project; a Project may have many linked threads. `publishToSite` is
-dormant Project state for a later phase. The current **Publish to site** Discord tag remains
-the sole site-export authority.
+the exact Project-page publication boundary. Re-registering a thread preserves its Project
+link, activity copy, and `publishOnProject` state.
+
+### Site publication and media
+
+The scheduled export writes `showcase.json` v2, `projects.json` v1, and `jams.json` v2 into
+a staging clone of the site. Validation and a complete site build must pass before the
+workflow promotes any candidate data.
+
+- Showcase publication still requires the live **Publish to site** forum tag. A linked
+  Showcase item resolves only its exact `thread.projectId`, requires the same owner, and
+  exports the Project's frozen slug. Legacy threads with no Project link stay unlinked.
+- A Project exports only when `project.publishToSite === true`. Owner IDs, source thread
+  IDs, publication flags, and Firestore implementation fields are never copied to public
+  JSON.
+- A linked public thread becomes Project activity only when `publishOnProject === true`
+  and its purpose is `feedback`, `project-update`, or `jam-entry`. The default is false.
+- `profileThreadId` selects the hero image. Ordered `mediaThreadIds` select up to 12 gallery
+  images. Every source must be a same-owner public Discord thread with an exact backlink to
+  the Project; only owner-authored image attachments are downloaded.
+- Generated Project images live under
+  `public/assets/projects/<slug>/_discord-export/`. Cleanup and workflow deletion are
+  restricted to that directory, so checked-in sibling assets remain untouched. Treat
+  `_discord-export` as exporter-owned.
+
+Project copy and structured `links`, `activities`, and `wiki` fields are edited through the
+authenticated website's trusted server path. Direct website uploads and video ingestion are
+outside this Discord media-source pipeline.
+
+`/mygame link` and `/mygame publish` remain deferred. The current command flow does not yet
+collect complete status and publication consent or prevent duplicate creation in one safe
+transaction, so this release does not expose a partial command.
 
 **`points`** (doc id = `${threadId}_${commentMessageId}`)
 
@@ -146,7 +180,7 @@ mad-lib tally. Nothing user-identifying is stored.
 | `/leaderboard [scope]` | everyone | Top 10 by points. `scope` = `week` (default) or `all`. |
 | `/mystats` | everyone | Your total points, weekly points, and weekly rank. |
 | `/needsreviews` | everyone | Showcase threads with the fewest comments — where reviewers should go. |
-| `/projecturl <url>` | current thread owner | Save playable URL metadata for the current registered thread. This does not publish or create a Project/page; only the **Publish to site** tag controls site publication. |
+| `/projecturl <url>` | current thread owner | Save playable URL metadata for the current registered thread. This does not publish or create a Project page; the **Publish to site** tag controls only the thread's Showcase listing. |
 | `/rescan` | mod | Backfill registration + points from watched forums (downtime recovery). |
 | `/points adjust <user> <amount> <reason>` | mod | Manual point override; writes an audit doc. |
 | `/registerforum <channel> <mode>` | mod | Add a forum to the watched list with a mode. |

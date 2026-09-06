@@ -19,13 +19,17 @@ export async function registerThreadTransaction({ transaction, ref, data }) {
     ...data,
     ...(!current || !Object.hasOwn(current, 'projectId') ? { projectId: null } : {}),
     ...(!current || !Object.hasOwn(current, 'purpose') ? { purpose: null } : {}),
+    ...(!current || !Object.hasOwn(current, 'publishOnProject') ? { publishOnProject: false } : {}),
+    ...(!current || !Object.hasOwn(current, 'activityTitle') ? { activityTitle: null } : {}),
+    ...(!current || !Object.hasOwn(current, 'activitySummary') ? { activitySummary: null } : {}),
   };
   transaction.set(ref, registration, { merge: true });
   return registration;
 }
 
 // Register a thread. Idempotent: re-registering an existing thread leaves Project links
-// intact, while a newly registered thread starts with no Project relationship.
+// intact, while a newly registered thread starts with no Project relationship or
+// Project-page publication consent.
 export async function registerThread(thread, mode) {
   const ref = threadsRef().doc(thread.id);
 

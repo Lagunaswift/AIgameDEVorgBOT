@@ -1,6 +1,6 @@
-# Scheduled site refresh: pulls showcase games, screenshots, org stats, and jam
-# events from Discord/Firestore into a staging clone of AIGAMEDEVSITE, validates and
-# builds it, then promotes only generated data/assets into the checked-out site repo.
+# Scheduled site refresh: pulls Showcase games, Projects, screenshots, org stats, and
+# jam events from Discord/Firestore into a staging clone of AIGAMEDEVSITE, validates
+# and builds it, then promotes only generated data/assets into the checked-out site repo.
 # Vercel then deploys the site automatically. Also runnable on demand from the
 # Actions tab ("Run workflow").
 #
@@ -11,7 +11,7 @@
 #   SITE_PUSH_TOKEN          - fine-grained PAT with Contents read/write on
 #                              Lagunaswift/AIGAMEDEVSITE
 # Required repository variable (Settings -> Secrets and variables -> Actions -> Variables):
-#   SITE_PUBLISH_TAG_ID      - Discord forum tag ID required for public project export
+#   SITE_PUBLISH_TAG_ID      - Discord forum tag ID required for public Showcase export
 
 name: Export site data
 
@@ -52,7 +52,7 @@ jobs:
         run: git clone --no-hardlinks site site-staging
 
       - name: Create staging asset directories
-        run: mkdir -p site-staging/public/assets/showcase site-staging/public/assets/awards
+        run: mkdir -p site-staging/public/assets/showcase site-staging/public/assets/awards site-staging/public/assets/projects
 
       - name: Run export into staging
         env:
@@ -71,12 +71,20 @@ jobs:
 
       - name: Promote validated generated data and assets
         run: |
-          mkdir -p site-staging/public/assets/showcase site-staging/public/assets/awards
-          mkdir -p site/src/data site/public/assets/showcase site/public/assets/awards
+          mkdir -p site-staging/public/assets/showcase site-staging/public/assets/awards site-staging/public/assets/projects
+          mkdir -p site/src/data site/public/assets/showcase site/public/assets/awards site/public/assets/projects
+          cp site-staging/src/data/projects.json site/src/data/projects.json
           cp site-staging/src/data/showcase.json site/src/data/showcase.json
           cp site-staging/src/data/jams.json site/src/data/jams.json
           rsync -a --delete site-staging/public/assets/showcase/ site/public/assets/showcase/
           rsync -a --delete site-staging/public/assets/awards/ site/public/assets/awards/
+          # Only the reserved exporter namespace participates in deletion. Manually
+          # curated sibling assets under each Project slug are excluded and protected.
+          rsync -a --delete --prune-empty-dirs \
+            --include='*/' \
+            --include='*/_discord-export/***' \
+            --exclude='*' \
+            site-staging/public/assets/projects/ site/public/assets/projects/
 
       - name: Commit and push site data
         working-directory: site
@@ -85,7 +93,7 @@ jobs:
           # have a linked account) deploys the automated data commits.
           git config user.name "Lagunaswift"
           git config user.email "jamesswift1988@gmail.com"
-          git add src/data/showcase.json src/data/jams.json public/assets/showcase public/assets/awards
+          git add src/data/projects.json src/data/showcase.json src/data/jams.json public/assets/projects public/assets/showcase public/assets/awards
           if git diff --cached --quiet; then
             echo "No data changes this run."
           else

@@ -35,8 +35,8 @@ export function buildHelpfulHintMessage({ emoji, threadName, welcome = false }) 
     `One-time tip: when feedback genuinely helps you, react to that comment with ${emoji} ` +
     `and the commenter earns a feedback point. As the thread owner, use **/projecturl** in ` +
     `this registered thread to save playable URL metadata; it does not publish or create a ` +
-    `Project/page. Public site listing is controlled only by the community's **Publish to site** ` +
-    `forum tag. Without that tag, your project stays in Discord.`;
+    `Project/page. The community's **Publish to site** forum tag controls this thread's ` +
+    `Showcase listing. Without that tag, the thread stays in Discord.`;
 }
 
 async function sendHelpfulHint({ channel, client, authorId, welcome = false }) {

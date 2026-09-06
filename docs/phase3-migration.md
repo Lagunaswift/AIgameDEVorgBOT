@@ -98,9 +98,10 @@ failure.
 
 - Rerun the dry run: every migrated thread must now be `already-linked`, counts must be
   `create: 0`, and the second run must perform zero writes by construction.
-- Run the site export against a disposable output directory and compare with the
-  pre-migration baseline: the tag-authoritative exporter output must be unchanged
-  (same public records, links, assets; no new internal data exposed).
+- Run the site export against a disposable output directory and compare legacy Showcase
+  fields and assets with the pre-migration baseline. The publication bridge adds
+  `projects.json` plus exact `projectId`, `projectSlug`, and lifecycle `state` fields; it
+  must not expose owner IDs, source thread IDs, or other internal data.
 - Keep the plan, apply report, and export comparisons in `.migration/` (git-ignored).
 
 ## Recovery

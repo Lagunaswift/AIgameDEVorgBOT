@@ -1,6 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readJson, validateExportReport, validateShowcaseSnapshot } from './site-export-safety.mjs';
+import {
+  isSafeAssetPath,
+  readJson,
+  validateExportReport,
+  validateProjectLinks,
+  validateProjectsSnapshot,
+  validateShowcaseSnapshot,
+} from './site-export-safety.mjs';
 
 function parseArgs(argv) {
   const args = { candidate: null, previous: null, report: null };
@@ -25,6 +32,9 @@ async function main() {
   const previous = await readJson(path.join(args.previous, 'src', 'data', 'showcase.json'));
   const report = validateExportReport(await readJson(args.report));
   validateShowcaseSnapshot(candidate, previous, report);
+  const projects = await readJson(path.join(args.candidate, 'src', 'data', 'projects.json'));
+  validateProjectsSnapshot(projects);
+  validateProjectLinks(candidate, projects);
   const jams = await readJson(path.join(args.candidate, 'src', 'data', 'jams.json'));
   if (jams.version !== 2 || !Array.isArray(jams.jams) || Number.isNaN(Date.parse(jams.generatedAt || ''))) {
     throw new Error('candidate jams.json must contain version 2, an ISO generatedAt, and a jams array');
@@ -33,10 +43,19 @@ async function main() {
   for (const game of candidate.games) {
     for (const assetPath of [game.image, game.award && game.award.emoji]) {
       if (!assetPath) continue;
-      if (!assetPath.startsWith('/assets/') || assetPath.includes('..')) {
+      if (!isSafeAssetPath(assetPath)) {
         throw new Error(`candidate game ${game.id} has an unsafe asset path`);
       }
       await fs.access(path.join(args.candidate, 'public', assetPath));
+    }
+  }
+  for (const project of projects.projects) {
+    for (const media of [project.hero, ...(project.media || [])]) {
+      if (!media) continue;
+      if (!isSafeAssetPath(media.src)) {
+        throw new Error(`candidate Project ${project.id} has an unsafe asset path`);
+      }
+      await fs.access(path.join(args.candidate, 'public', media.src));
     }
   }
   console.log('Site export validation passed.');

@@ -15,7 +15,7 @@ function registrationData() {
   };
 }
 
-test('new thread registration initializes nullable Project relationship fields', async () => {
+test('new thread registration initializes Project relationship and publication fields', async () => {
   let written;
   const transaction = {
     async get() { return snapshot(null); },
@@ -24,13 +24,26 @@ test('new thread registration initializes nullable Project relationship fields',
   const result = await registerThreadTransaction({ transaction, ref: 'thread', data: registrationData() });
   assert.equal(result.projectId, null);
   assert.equal(result.purpose, null);
+  assert.equal(result.publishOnProject, false);
+  assert.equal(result.activityTitle, null);
+  assert.equal(result.activitySummary, null);
   assert.equal(written.data.projectId, null);
   assert.equal(written.data.purpose, null);
+  assert.equal(written.data.publishOnProject, false);
+  assert.equal(written.data.activityTitle, null);
+  assert.equal(written.data.activitySummary, null);
   assert.deepEqual(written.options, { merge: true });
 });
 
-test('re-registration preserves an existing Project relationship', async () => {
-  const existing = { ...registrationData(), projectId: 'project-1', purpose: 'feedback' };
+test('re-registration preserves an existing Project relationship and publication metadata', async () => {
+  const existing = {
+    ...registrationData(),
+    projectId: 'project-1',
+    purpose: 'feedback',
+    publishOnProject: true,
+    activityTitle: 'Combat balance playtest',
+    activitySummary: 'Looking for feedback on enemy scaling.',
+  };
   let written;
   const transaction = {
     async get() { return snapshot(existing); },
@@ -41,9 +54,16 @@ test('re-registration preserves an existing Project relationship', async () => {
   });
   assert.equal(Object.hasOwn(result, 'projectId'), false);
   assert.equal(Object.hasOwn(result, 'purpose'), false);
+  assert.equal(Object.hasOwn(result, 'publishOnProject'), false);
+  assert.equal(Object.hasOwn(result, 'activityTitle'), false);
+  assert.equal(Object.hasOwn(result, 'activitySummary'), false);
   assert.equal(Object.hasOwn(written.data, 'projectId'), false);
   assert.equal(Object.hasOwn(written.data, 'purpose'), false);
-  assert.deepEqual(existing, { ...registrationData(), projectId: 'project-1', purpose: 'feedback' });
+  assert.equal(Object.hasOwn(written.data, 'publishOnProject'), false);
+  assert.equal(Object.hasOwn(written.data, 'activityTitle'), false);
+  assert.equal(Object.hasOwn(written.data, 'activitySummary'), false);
+  assert.equal(existing.publishOnProject, true);
+  assert.equal(existing.activityTitle, 'Combat balance playtest');
 });
 
 test('re-registration initializes missing relationship fields on a legacy thread', async () => {
@@ -56,6 +76,12 @@ test('re-registration initializes missing relationship fields on a legacy thread
   const result = await registerThreadTransaction({ transaction, ref: 'thread', data: registrationData() });
   assert.equal(result.projectId, null);
   assert.equal(result.purpose, null);
+  assert.equal(result.publishOnProject, false);
+  assert.equal(result.activityTitle, null);
+  assert.equal(result.activitySummary, null);
   assert.equal(written.data.projectId, null);
   assert.equal(written.data.purpose, null);
+  assert.equal(written.data.publishOnProject, false);
+  assert.equal(written.data.activityTitle, null);
+  assert.equal(written.data.activitySummary, null);
 });
