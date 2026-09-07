@@ -153,6 +153,14 @@ export function validateExportReport(report) {
     if (ids.has(id)) throw new Error(`export report contains duplicate withheld id ${id}`);
     ids.add(id);
   }
+  const withheldProjectIds = report.withheldProjectIds ?? [];
+  if (!Array.isArray(withheldProjectIds)) throw new Error('export report withheldProjectIds must be an array');
+  const withheldProjects = new Set();
+  for (const id of withheldProjectIds) {
+    if (!isText(id, 1500) || id.includes('/')) throw new Error('export report contains an invalid withheld Project id');
+    if (withheldProjects.has(id)) throw new Error(`export report contains duplicate withheld Project id ${id}`);
+    withheldProjects.add(id);
+  }
   const unpublishedProjectIds = report.unpublishedProjectIds ?? [];
   if (!Array.isArray(unpublishedProjectIds)) throw new Error('export report unpublishedProjectIds must be an array');
   const projectIds = new Set();
@@ -277,7 +285,8 @@ export function validateShowcaseSnapshot(candidate, previous, report = { version
   }
 }
 
-export function validateProjectsSnapshot(candidate) {
+export function validateProjectsSnapshot(candidate, previous = null, report = { version: 1, withheldIds: [] }) {
+  validateExportReport(report);
   if (!isRecord(candidate) || candidate.version !== 1 || !Array.isArray(candidate.projects)) {
     throw new Error('candidate projects.json must contain version 1 and a projects array');
   }
@@ -344,6 +353,16 @@ export function validateProjectsSnapshot(candidate) {
     links.forEach((item, index) => validateProjectLink(item, `candidate Project ${id} link ${index + 1}`));
     activities.forEach((item, index) => validateProjectActivity(item, `candidate Project ${id} activity ${index + 1}`));
     validateProjectWiki(value.wiki, id);
+  }
+  if (!previous || previous.version !== 1 || !Array.isArray(previous.projects)) return;
+  const withheldProjectIds = new Set(report.withheldProjectIds ?? []);
+  const unpublishedProjectIds = new Set(report.unpublishedProjectIds ?? []);
+  const missing = previous.projects
+    .filter((project) => project && !ids.has(project.id)
+      && !withheldProjectIds.has(project.id) && !unpublishedProjectIds.has(project.id))
+    .map((project) => project.id);
+  if (missing.length) {
+    throw new Error(`candidate projects.json would remove non-withheld Project(s): ${missing.join(', ')}`);
   }
 }
 

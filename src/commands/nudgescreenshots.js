@@ -114,7 +114,7 @@ export async function execute(interaction) {
     const done = i + 1;
     if (done % PROGRESS_EVERY === 0 && done < toNudge.length) {
       await interaction.editReply(
-        `Progress: ${done}/${toNudge.length} processed (nudged ${nudged}, skipped ${skipped}, errored ${errored})...`,
+        `Progress: ${done}/${toNudge.length} processed (nudged ${nudged}, skipped ${skipped}, errors ${errored}).`,
       );
     }
 
@@ -129,7 +129,7 @@ export async function execute(interaction) {
       `Skipped (already nudged): ${skipped}`,
       `Errored: ${errored}`,
       remainder > 0
-        ? `Note: ${remainder} more thread(s) exceeded the ${MAX_NUDGES_PER_RUN}-per-run cap; run again to continue.`
+        ? `${remainder} more thread(s) exceeded the ${MAX_NUDGES_PER_RUN}-per-run cap. Run again to continue.`
         : null,
     ]
       .filter(Boolean)

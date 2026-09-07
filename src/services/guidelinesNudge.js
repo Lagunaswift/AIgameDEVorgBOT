@@ -55,9 +55,8 @@ export async function sendGuidelinesNudge(thread, ownerId, { allowArchived = fal
   }
 
   const message =
-    `Hey <@${ownerId}>! Per the guidelines, please add 1-2 specific questions when looking ` +
-    `for feedback. Also let us know how long you expect people to be playing for. ` +
-    `Post will be deleted in 12 hours if you don't!`;
+    `Hey <@${ownerId}>, add one or two specific feedback questions and say how long the ` +
+    `build takes to play. Please update the post within 12 hours.`;
 
   try {
     await thread.send({ content: message });

@@ -1,30 +1,35 @@
 // Screenshot nudge: a friendly one-time reminder for showcase threads that have no image.
 //
-// Image-presence rule (shared with /nudgescreenshots): a thread "has a screenshot" when
-// EITHER its starter message has an image attachment, OR any of the first 50 messages
-// fetched after the starter that were authored by the thread owner has one. Dedup is
+// Image-presence rule (shared with the exporter): use the owner's starter attachment,
+// then scan bounded early reply history and a recent-page fallback for owner uploads. Dedup is
 // tracked in the `screenshotNudges` collection (doc id = threadId) so a thread is ever
 // nudged at most once, whether that happens via the scheduled check or the mod command.
 
 import { getDb, serverTimestamp } from '../firebase.js';
+import { findOwnerReplyImage } from '../lib/threadImages.js';
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 
 function isImageAttachment(attachment) {
   if (!attachment) return false;
-  if (attachment.contentType && attachment.contentType.startsWith('image/')) return true;
+  if (typeof attachment.contentType === 'string' && attachment.contentType.toLowerCase().startsWith('image/')) return true;
 
   const name = attachment.name || '';
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
   return IMAGE_EXTENSIONS.includes(ext);
 }
 
-function messageHasImage(message) {
-  if (!message || !message.attachments) return false;
+function messageImage(message) {
+  if (!message || !message.attachments) return null;
   for (const attachment of message.attachments.values()) {
-    if (isImageAttachment(attachment)) return true;
+    if (isImageAttachment(attachment)) return attachment;
   }
-  return false;
+  return null;
+}
+
+export function buildScreenshotNudgeMessage(ownerId) {
+  return `Hey <@${ownerId}>, attach a screenshot or short gameplay GIF to a new reply in this thread. ` +
+    `Upload it from your own account so Byte can find your game's image. Link previews and other members' uploads won't be used.`;
 }
 
 function dedupRef(threadId) {
@@ -33,6 +38,8 @@ function dedupRef(threadId) {
 
 // Implements the shared image-presence rule against live gateway objects.
 export async function threadHasScreenshot(thread) {
+  const ownerId = thread.ownerId;
+  if (!ownerId) return false;
   // Starter message (id === thread.id in a forum thread). It may have been deleted, in
   // which case fetchStarterMessage can throw or resolve null; either way, fall through.
   let starter = null;
@@ -41,24 +48,16 @@ export async function threadHasScreenshot(thread) {
   } catch {
     starter = null;
   }
-  if (messageHasImage(starter)) return true;
+  if (starter?.author?.id === ownerId && !starter.author.bot && messageImage(starter)) return true;
 
-  const ownerId = thread.ownerId;
-  if (!ownerId) return false;
-
-  let recent;
-  try {
-    recent = await thread.messages.fetch({ after: thread.id, limit: 50 });
-  } catch (err) {
-    console.warn(`[screenshotNudge] failed to fetch messages for thread ${thread.id}:`, err.message);
-    return false;
-  }
-
-  const ownerMessages = [...recent.values()]
-    .filter((m) => m.author?.id === ownerId)
-    .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
-
-  return ownerMessages.some((m) => messageHasImage(m));
+  // Lookup failures propagate to callers, which skip the nudge rather than permanently
+  // marking a thread as missing an image when its history could not be read.
+  return Boolean(await findOwnerReplyImage({
+    threadId: thread.id,
+    ownerId,
+    fetchPage: async (options) => [...(await thread.messages.fetch(options)).values()],
+    findImage: messageImage,
+  }));
 }
 
 // Sends the nudge once, guarded by the Firestore dedup doc. Returns true if a nudge was
@@ -93,10 +92,7 @@ export async function sendScreenshotNudge(thread, ownerId, { allowArchived = fal
     return false; // doc already exists: someone else nudged first
   }
 
-  const message =
-    `Hey <@${ownerId}>, nice post! Threads with an image get way more eyes and feedback. ` +
-    `Add a screenshot or a short gameplay GIF to your first message. Landscape shots work ` +
-    `best, and actual gameplay beats a logo or title screen every time.`;
+  const message = buildScreenshotNudgeMessage(ownerId);
 
   try {
     await thread.send({ content: message });

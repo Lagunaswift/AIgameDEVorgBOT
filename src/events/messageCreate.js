@@ -47,7 +47,7 @@ export async function execute(message) {
     const embed = new EmbedBuilder()
       .setColor(0xFF6B35)
       .setDescription(
-        `<:ShowcaseBotReact:1521124760220729445> **New Poster Detected**\n\n` +
+        `<:ShowcaseBotReact:1521124760220729445> **New member post**\n\n` +
         `**Who:** <@${userId}> (${message.author.tag})\n` +
         `**Where:** <#${message.channelId}>\n` +
         `**Said:** ${preview}`,

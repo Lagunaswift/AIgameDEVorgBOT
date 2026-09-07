@@ -161,7 +161,10 @@ async function gatherChat(client, cfg, window, dateStr) {
   if (channelIds.length === 0) return null;
 
   try {
-    const collected = await collectTranscript(client, channelIds, window);
+    const collected = await collectTranscript(client, channelIds, {
+      ...window,
+      guildId: cfg.guildId,
+    });
     let summary = null;
     if (collected.messageCount >= MIN_MESSAGES_FOR_SUMMARY) {
       summary = await summariseChat({
@@ -221,16 +224,16 @@ function chatLines(chat) {
   if (chat.summary) {
     const where = chat.channelsRead > 1 ? ` across ${chat.channelsRead} channels` : '';
     return [
-      `💬 **The chat, condensed** (${n} ${plural(n, 'message')}${where}):`,
+      `💬 **Chat summary** (${n} ${plural(n, 'message')}${where}):`,
       chat.summary,
-      '— Summarises configured public channels using Anthropic.',
+      'Summary of configured public channels, using Anthropic.',
     ];
   }
   if (n < MIN_MESSAGES_FOR_SUMMARY) {
-    return [`💬 A quiet **${n} ${plural(n, 'message')}** in chat. Barely worth a sector.`];
+    return [`💬 **${n} ${plural(n, 'message')}** in chat. Too little for a summary.`];
   }
   return [
-    `💬 **${n} messages** in chat today, but my summary sector corrupted. Scroll up, it's good exercise.`,
+    `💬 **${n} messages** in chat today, but the summary failed. Read the channel for the full record.`,
   ];
 }
 
@@ -250,7 +253,7 @@ function buildLines(stats, rng) {
   const entries = stats.competitionThreads;
   if (entries.length > 0) {
     lines.push(
-      `🎨 **${entries.length} competition ${plural(entries.length, 'entry', 'entries')}** filed. May the best pixels win.`,
+      `🎨 **${entries.length} competition ${plural(entries.length, 'entry', 'entries')}** submitted.`,
     );
   }
 
@@ -261,13 +264,13 @@ function buildLines(stats, rng) {
   }
 
   for (const m of stats.milestones.slice(0, MAX_MILESTONE_LINES)) {
-    lines.push(`🏆 <@${m.userId}> passed **${m.threshold} points** all-time. No CD key required.`);
+    lines.push(`🏆 <@${m.userId}> passed **${m.threshold} points** all-time.`);
   }
 
   if (stats.newPosterCount > 0) {
     const n = stats.newPosterCount;
     lines.push(
-      `👋 **${n} ${plural(n, 'person', 'people')} posted for the first time.** Say hi before they fragment.`,
+      `👋 **${n} ${plural(n, 'person', 'people')} posted for the first time.** Say hello.`,
     );
   }
 
@@ -281,7 +284,7 @@ function buildLines(stats, rng) {
 // byteTag is Byte's face (the configured :byte: emoji, or 💾) in the header and signature.
 export function describeDigest({ dateStr, stats, chat = null, live = false, byteTag = '💾' }) {
   const rng = dayRng(dateStr);
-  const header = `${byteTag} **BYTE.LOG — ${prettyDate(dateStr)}${live ? ' (so far)' : ''}**`;
+  const header = `${byteTag} **BYTE.LOG: ${prettyDate(dateStr)}${live ? ' (so far)' : ''}**`;
   const signoff = `-# Byte ${byteTag} · ${pick(rng, SIGNOFFS)}`;
   const hasChat = Boolean(chat && chat.messageCount > 0);
 

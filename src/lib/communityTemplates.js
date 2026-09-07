@@ -3,8 +3,8 @@ const templates = {
 
 **What I’m building:**
 **Engine/tool/version:**
-**Intended outcome:**
-**Actual behavior:**
+**Expected result:**
+**What happens instead:**
 **What I’ve tried:**
 **Relevant code, log, or screenshot:**
 **Desired help:**
@@ -28,7 +28,7 @@ const templates = {
 
 **What changed:**
 **What worked:**
-**What did not:**
+**What did not work:**
 **What’s next:**
 **Feedback wanted:** Yes / No
 `,
@@ -41,15 +41,15 @@ export function buildPostTemplate(type) {
 }
 
 export function buildCommunityNoteChecklist() {
-  return `## Community note nomination — manual curation only
+  return `## Community note nomination: manual curation only
 
 Nothing publishes without every material contributor’s explicit approval.
 
-Before any draft is considered, confirm:
+Before considering a draft, confirm:
 - **Proposed fields:** title, problem, tried, worked, didn't, limitations, sources
 - **Credit preferences:** named / anonymous / no credit
 - **Final exact-draft approval:** every material contributor approves the exact final text
 - **Internal ID and privacy boundary:** Discord IDs and forum IDs must never appear publicly
 
-This command only provides this consent-first checklist. It does not collect, save, scrape, summarize, draft, or publish anything.`;
+This command only shows the checklist. It does not collect, save, scrape, summarise, draft, or publish anything.`;
 }

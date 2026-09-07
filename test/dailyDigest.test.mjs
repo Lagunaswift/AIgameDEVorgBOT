@@ -32,5 +32,5 @@ test('generated chat recaps include the Anthropic disclosure', () => {
     chat: { messageCount: 5, channelsRead: 1, summary: 'People discussed the jam.' },
   });
 
-  assert.match(content, /Summarises configured public channels using Anthropic\./);
+  assert.match(content, /Summary of configured public channels, using Anthropic\./);
 });

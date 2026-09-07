@@ -11,11 +11,11 @@ import { cooldownRemaining, noteUse, generateIdea } from '../services/gameIdeas.
 
 export const data = new SlashCommandBuilder()
   .setName('gameidea')
-  .setDescription('Byte generates a game idea. Comical, occasionally accidentally good.')
+  .setDescription('Ask Byte for a random game idea.')
   .addStringOption((o) =>
     o
       .setName('theme')
-      .setDescription('Optional flavour to aim for (e.g. "horror", "cats", "co-op")')
+      .setDescription('Optional theme, such as "horror", "cats", or "co-op"')
       .setMaxLength(120),
   );
 
@@ -48,7 +48,7 @@ export async function execute(interaction) {
 
   if (res.status === 'capped') {
     await interaction.editReply(
-      `Today's idea quota (${res.cap}) is spent. The drive refills at midnight UTC. Rationing, like the old days.`,
+      `Today's idea quota (${res.cap}) is spent. The drive refills at midnight UTC.`,
     );
     return;
   }
@@ -57,7 +57,7 @@ export async function execute(interaction) {
   const byteTag = parseDisplayEmoji(cfg.byteEmoji).tag;
   const footer =
     res.status === 'madlib'
-      ? `-# ${byteTag} seed: ${res.seedLabel} · raw ingredients — no API key configured`
+      ? `-# ${byteTag} seed: ${res.seedLabel} · raw ingredients; no API key configured`
       : `-# ${byteTag} seed: ${res.seedLabel} · idea #${res.number}`;
 
   await interaction.editReply({

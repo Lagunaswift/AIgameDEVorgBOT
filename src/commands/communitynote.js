@@ -5,12 +5,12 @@ import { getThread } from '../services/threads.js';
 
 export const data = new SlashCommandBuilder()
   .setName('communitynote')
-  .setDescription('(Mod) Community-note curation tools.')
+  .setDescription('(Mod) Community note tools.')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addSubcommand((subcommand) =>
     subcommand
       .setName('nominate')
-      .setDescription('Show the manual consent-first community-note checklist.'),
+      .setDescription('Show the manual, consent-first community note checklist.'),
   );
 
 export async function execute(interaction) {

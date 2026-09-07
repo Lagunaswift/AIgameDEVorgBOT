@@ -25,6 +25,9 @@ function emptyDoc() {
 export function buildEffectiveConfig(docData) {
   const d = docData || emptyDoc();
   const effective = {
+    // Guild identity is env-owned: a runtime document must not redirect collection to a
+    // different server, and chat visibility checks need it even when other values are live.
+    guildId: envConfig.guildId,
     watchedShowcaseForumIds: d.watchedShowcaseForumIds ?? envConfig.watchedShowcaseForumIds,
     watchedCompetitionForumIds:
       d.watchedCompetitionForumIds ?? envConfig.watchedCompetitionForumIds,

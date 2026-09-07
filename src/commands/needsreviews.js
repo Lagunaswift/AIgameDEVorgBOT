@@ -3,7 +3,7 @@ import { listThreadsByMode } from '../services/threads.js';
 
 export const data = new SlashCommandBuilder()
   .setName('needsreviews')
-  .setDescription('Show showcase posts that need feedback (fewest comments first).');
+  .setDescription('Show showcase posts with the fewest comments first.');
 
 export async function execute(interaction) {
   await interaction.deferReply({ ephemeral: true });
@@ -37,8 +37,8 @@ export async function execute(interaction) {
   const top = withCounts.slice(0, 10);
 
   const lines = top.map((t) => {
-    const label = t.comments === 0 ? '**0 comments — needs a first look!**' : `${t.comments} comments`;
-    return `• <#${t.threadId}> — ${label}`;
+    const label = t.comments === 0 ? '**0 comments: needs a first look**' : `${t.comments} comments`;
+    return `• <#${t.threadId}>: ${label}`;
   });
 
   await interaction.editReply(

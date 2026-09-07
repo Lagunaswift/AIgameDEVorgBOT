@@ -45,8 +45,8 @@ export async function execute(interaction) {
   await interaction.editReply(
     [
       self
-        ? `📊 **Your feedback stats** — ${isoWeek()}`
-        : `📊 **Feedback stats for ${target.tag}** — ${isoWeek()}`,
+        ? `📊 **Your feedback stats**: ${isoWeek()}`
+        : `📊 **Feedback stats for ${target.tag}**: ${isoWeek()}`,
       ``,
       `This week: **${stats.weekly}**`,
       `All time: **${stats.total}**`,

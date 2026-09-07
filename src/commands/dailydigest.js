@@ -13,7 +13,7 @@ import { anthropicConfigured } from '../services/anthropic.js';
 
 export const data = new SlashCommandBuilder()
   .setName('dailydigest')
-  .setDescription("(Mod) Preview or post Byte's daily digest now.")
+  .setDescription("(Mod) Preview or post Byte's daily digest.")
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addStringOption((o) =>
     o
@@ -59,7 +59,7 @@ export async function execute(interaction) {
       : '**no channel configured** (set `DAILY_DIGEST_CHANNEL_ID`)';
     const notes = [];
     if (!anthropicConfigured()) {
-      notes.push('Chat recap is off (no `ANTHROPIC_API_KEY`), so this is the template-only version.');
+      notes.push('Chat recap is off because `ANTHROPIC_API_KEY` is not set. This is the template-only version.');
     }
     if (prepared.quiet && prepared.cfg.dailyDigestSkipQuiet) {
       notes.push('Quiet day + skip-quiet is on, so the cron would post nothing.');
@@ -84,7 +84,7 @@ export async function execute(interaction) {
   switch (res.status) {
     case 'posted':
       await interaction.editReply(
-        `✅ Posted the digest${live ? ' (live window)' : ` for **${res.dateStr}**`} via ${res.via === 'webhook' ? 'the Byte webhook' : 'the bot (no Manage Webhooks — no Byte avatar)'}.`,
+        `✅ Posted the digest${live ? ' (live window)' : ` for **${res.dateStr}**`} via ${res.via === 'webhook' ? 'the Byte webhook' : 'the bot (no Manage Webhooks, so no Byte avatar)'}.`,
       );
       break;
     case 'no-config':
@@ -94,7 +94,7 @@ export async function execute(interaction) {
       break;
     case 'quiet-skipped':
       await interaction.editReply(
-        '💤 Nothing happened in that window and skip-quiet is on, so nothing was posted.',
+        '💤 Nothing happened in that window. Skip-quiet is on, so nothing was posted.',
       );
       break;
     case 'fetch-failed':

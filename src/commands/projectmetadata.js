@@ -46,7 +46,7 @@ export const commands = [
 
       await setThreadProjectUrl(thread.threadId, projectUrl);
       await interaction.reply({
-        content: 'Playable URL metadata saved for this registered thread. This does not publish or create a Project/page; the **Publish to site** tag controls only this thread’s Showcase listing.',
+        content: 'Playable URL saved for this thread. It does not publish or create a Project page. The **Publish to site** tag controls this thread’s Showcase listing.',
         ephemeral: true,
       });
     },

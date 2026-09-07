@@ -34,6 +34,7 @@ export const config = {
   discordToken: process.env.DISCORD_TOKEN,
   clientId: process.env.CLIENT_ID,
   guildId: process.env.GUILD_ID,
+  sitePublishTagId: process.env.SITE_PUBLISH_TAG_ID || null,
 
   firebaseServiceAccount: process.env.FIREBASE_SERVICE_ACCOUNT,
 
@@ -105,9 +106,9 @@ export const config = {
   // Default 💾 until the server has real Byte art uploaded as an emoji.
   byteEmoji: process.env.BYTE_EMOJI || null,
 
-  // The chat-recap half of the digest (services/chatSummary.js). Off without an API key or
-  // an explicit channel list — the digest then posts its template-only version. The key is
-  // env only (it's a secret); model and channel list are also overridable via the config doc.
+  // The chat-recap half of the digest (services/chatSummary.js). It is off without an API
+  // key. An empty channel list uses the digest channel. The key is env only (it's a secret);
+  // model and channel list are also overridable via the config doc.
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
   dailyDigestModel: process.env.DAILY_DIGEST_MODEL || 'claude-opus-5',
   dailyDigestChatChannelIds: parseIdList(process.env.DAILY_DIGEST_CHAT_CHANNEL_IDS),
@@ -118,9 +119,8 @@ export const config = {
   gameIdeaCooldownSeconds: intOr(process.env.GAME_IDEA_COOLDOWN_SECONDS, 300),
   gameIdeaDailyCap: intOr(process.env.GAME_IDEA_DAILY_CAP, 30),
 
-  // Screenshot nudge: a one-time friendly reminder posted in new showcase threads that
-  // still have no image after a short grace period, pointing the poster at the site
-  // showcase. Set to "false" to disable the scheduled check entirely (the /nudgescreenshots
+  // Screenshot nudge: a one-time reminder posted in new showcase threads that still have no
+  // image after a short grace period. Set to "false" to disable the scheduled check entirely (the /nudgescreenshots
   // mod command still works either way). Delay is in minutes.
   screenshotNudgeEnabled:
     (process.env.SCREENSHOT_NUDGE_ENABLED || 'true').toLowerCase() !== 'false',

@@ -1,0 +1,48 @@
+name: Verify bot and Firestore transactions
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mygame-firestore-emulator-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout bot without credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify bot suite against Firestore emulator
+        env:
+          GCLOUD_PROJECT: demo-aigdbot-r2
+          REQUIRE_FIRESTORE_EMULATOR: '1'
+        run: >-
+          npx --yes firebase-tools@15.29.0 emulators:exec
+          --only firestore
+          --project demo-aigdbot-r2
+          --config .github/firebase-emulator.json
+          "node --test test/*.test.mjs"

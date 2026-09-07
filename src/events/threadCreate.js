@@ -52,7 +52,7 @@ async function notifyModFeed(thread, data, mode) {
     const embed = new EmbedBuilder()
       .setColor(mode === 'showcase' ? 0x39FF14 : 0xFF6B35)
       .setDescription(
-        `<:ShowcaseBotReact:1521124760220729445> **New ${label} Post**\n\n` +
+        `<:ShowcaseBotReact:1521124760220729445> **New ${label} post**\n\n` +
         `**${data.title}**\n` +
         `by <@${data.ownerId}> in <#${thread.parentId}>\n\n` +
         `<#${thread.id}>`,

@@ -20,6 +20,7 @@
 
 import { anthropicConfigured, callClaude, scrubModelOutput } from './anthropic.js';
 import { BYTE_CHARACTER } from '../lib/byte.js';
+import { fetchPublicRecapChannel } from './chatSummaryVisibility.js';
 
 // 100 messages per page; 12 pages bounds both the REST calls and the read volume for a
 // very busy channel. Oldest pages beyond the cap are dropped (newest chat wins).
@@ -34,31 +35,32 @@ const MAX_SUMMARY_CHARS = 1700;
 // Read the window's human messages from the given channels, newest-first per channel,
 // and return them as chronological "[#channel] name: text" lines. cleanContent is used
 // so mentions arrive as readable names rather than <@id> snowflakes.
-export async function collectTranscript(client, channelIds, { start, end }) {
+export async function collectTranscript(client, channelIds, { start, end, guildId }) {
   const collected = [];
   let channelsRead = 0;
 
   for (const id of channelIds) {
-    let channel;
-    try {
-      channel = await client.channels.fetch(id);
-    } catch (err) {
-      console.warn(`[chatSummary] could not fetch chat channel ${id}: ${err.message}`);
-      continue;
-    }
-    if (!channel || !channel.isTextBased() || typeof channel.messages?.fetch !== 'function') {
-      console.warn(`[chatSummary] chat channel ${id} is not readable text; skipping`);
-      continue;
-    }
-    channelsRead++;
+    let channel = await fetchPublicRecapChannel(client, id, guildId);
+    if (!channel) continue;
 
+    const channelCollected = [];
+    let channelComplete = true;
     let before;
     for (let page = 0; page < MAX_PAGES_PER_CHANNEL; page++) {
+      // Recheck before every batch. A permission change must stop collection before the
+      // next REST read, even if the original channel object remains cached.
+      channel = await fetchPublicRecapChannel(client, id, guildId);
+      if (!channel) {
+        channelComplete = false;
+        break;
+      }
+
       let batch;
       try {
         batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
       } catch (err) {
         console.warn(`[chatSummary] fetching #${channel.name} failed: ${err.message}`);
+        channelComplete = false;
         break;
       }
       if (batch.size === 0) break;
@@ -81,7 +83,7 @@ export async function collectTranscript(client, channelIds, { start, end }) {
         if (!text) continue;
 
         const who = msg.member?.displayName || msg.author.displayName || msg.author.username;
-        collected.push({
+        channelCollected.push({
           ts: msg.createdTimestamp,
           line: `[#${channel.name}] ${who}: ${text.slice(0, MAX_LINE_CHARS)}`,
         });
@@ -90,6 +92,13 @@ export async function collectTranscript(client, channelIds, { start, end }) {
       before = batch.last()?.id; // fetch returns newest→oldest, so .last() is the oldest
       if (reachedWindowStart || !before) break;
     }
+
+    // The final recheck closes the gap after the last page: material collected while a
+    // channel was public is discarded if it becomes restricted before this source ends.
+    if (!channelComplete || !(await fetchPublicRecapChannel(client, id, guildId))) continue;
+
+    collected.push(...channelCollected);
+    channelsRead++;
   }
 
   collected.sort((a, b) => a.ts - b.ts);

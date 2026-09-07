@@ -28,15 +28,14 @@ function emojiDisplay(client, helpfulEmoji) {
 
 export function buildHelpfulHintMessage({ emoji, threadName, welcome = false }) {
   const opening = welcome
-    ? `Your new showcase thread **${threadName}** is registered.`
-    : `Someone just commented on your showcase thread **${threadName}**.`;
+    ? `Your showcase thread **${threadName}** is registered.`
+    : `Someone commented on your showcase thread **${threadName}**.`;
 
   return `${opening}\n\n` +
-    `One-time tip: when feedback genuinely helps you, react to that comment with ${emoji} ` +
-    `and the commenter earns a feedback point. As the thread owner, use **/projecturl** in ` +
-    `this registered thread to save playable URL metadata; it does not publish or create a ` +
-    `Project/page. The community's **Publish to site** forum tag controls this thread's ` +
-    `Showcase listing. Without that tag, the thread stays in Discord.`;
+    `When feedback helps, react to the comment with ${emoji}. Eligible comments earn a feedback ` +
+    `point under the server's length and cap rules. As the thread owner, use **/projecturl** here to save the playable URL. This does ` +
+    `not publish or create a Project page. The **Publish to site** forum tag controls this ` +
+    `thread's Showcase listing. Without that tag, it stays out of Showcase. Project publication is a separate setting.`;
 }
 
 async function sendHelpfulHint({ channel, client, authorId, welcome = false }) {

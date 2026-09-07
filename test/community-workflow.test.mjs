@@ -8,8 +8,8 @@ test('post templates contain the required community workflow fields', () => {
   const buildHelp = buildPostTemplate('build_help');
   assert.match(buildHelp, /What I’m building/);
   assert.match(buildHelp, /Engine\/tool\/version/);
-  assert.match(buildHelp, /Intended outcome/);
-  assert.match(buildHelp, /Actual behavior/);
+  assert.match(buildHelp, /Expected result/);
+  assert.match(buildHelp, /What happens instead/);
   assert.match(buildHelp, /What I’ve tried/);
   assert.match(buildHelp, /Relevant code, log, or screenshot/);
   assert.match(buildHelp, /Desired help/);
@@ -38,7 +38,7 @@ test('community-note checklist is consent-first and private', () => {
   for (const field of [
     'every material contributor’s explicit approval', 'title, problem, tried, worked, didn\'t, limitations, sources',
     'named / anonymous / no credit', 'exact final text', 'Discord IDs and forum IDs must never appear publicly',
-    'manual curation only', 'does not collect, save, scrape, summarize, draft, or publish anything',
+    'manual curation only', 'does not collect, save, scrape, summarise, draft, or publish anything',
   ]) assert.match(checklist, new RegExp(field));
 });
 

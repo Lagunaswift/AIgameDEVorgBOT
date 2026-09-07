@@ -99,7 +99,7 @@ const pointsCommand = {
     const verb = amount > 0 ? 'added' : 'removed';
     await interaction.editReply(
       `✅ ${verb} ${Math.abs(res.applied)} point(s) for ${user.tag}.\nReason: ${reason}\nAudit id: \`${res.auditId}\`` +
-        (milestone ? `\n🏆 Crossed **${milestone.announced} points** — alert posted to the mod feed.` : ''),
+        (milestone ? `\n🏆 Crossed **${milestone.announced} points**. Alert posted to the mod feed.` : ''),
     );
   },
 };
@@ -269,7 +269,7 @@ const seedUsersCommand = {
     }
 
     await interaction.editReply(
-      `✅ Seeded **${count}** users from **${scanned}** channels. Only genuinely new posters will trigger notifications now.`,
+      `✅ Seeded **${count}** users from **${scanned}** channels. Only new posters will trigger notifications now.`,
     );
   },
 };

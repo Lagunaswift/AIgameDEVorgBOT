@@ -58,10 +58,10 @@ async function notifyMilestone({ guild, member, points, total, label }) {
     const embed = new EmbedBuilder()
       .setColor(0xFFD700)
       .setDescription(
-        `<:ShowcaseBotReact:1521124760220729445> **Milestone Reached**\n\n` +
-        `<@${member.id}> (${member.user.tag}) hit **${milestone}**!\n` +
+        `<:ShowcaseBotReact:1521124760220729445> **Milestone reached**\n\n` +
+        `<@${member.id}> (${member.user.tag}) reached **${milestone}**.\n` +
         `Total points: **${total}**\n\n` +
-        `_Action needed — check if they qualify for a reward._`,
+        `_Check whether they qualify for a reward._`,
       )
       .setTimestamp();
 

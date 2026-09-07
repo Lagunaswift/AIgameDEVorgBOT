@@ -28,7 +28,7 @@ export async function execute(interaction) {
   const board = await getLeaderboard({ scope, limit: 10 });
 
   const title =
-    scope === 'week' ? `Feedback Leaderboard — ${isoWeek()}` : 'Feedback Leaderboard — All time';
+    scope === 'week' ? `Feedback leaderboard: ${isoWeek()}` : 'Feedback leaderboard: all time';
 
   const embed = new EmbedBuilder()
     .setColor(0x39FF14)
@@ -36,7 +36,7 @@ export async function execute(interaction) {
 
   if (board.length === 0) {
     embed.setDescription(
-      `<:ShowcaseBotReact:1521124760220729445> **${title}**\n\nNo points yet — go leave some feedback!`,
+      `<:ShowcaseBotReact:1521124760220729445> **${title}**\n\nNo points yet. Leave some feedback.`,
     );
     await interaction.editReply({ embeds: [embed] });
     return;
@@ -48,7 +48,7 @@ export async function execute(interaction) {
     const pts = entry.points === 1 ? '1 pt' : `${entry.points} pts`;
     // "T1." marks a shared position so nobody gets congratulated for a tie they didn't win.
     const pos = isTiedRank(ranked, entry.rank) ? `T${entry.rank}.` : `${entry.rank}.`;
-    return `<:helpfulfeedback:1521124800204898386> **${pos}** ${displayName(entry)} — **${pts}**`;
+    return `<:helpfulfeedback:1521124800204898386> **${pos}** ${displayName(entry)}: **${pts}**`;
   });
 
   embed.setDescription(

@@ -3,11 +3,11 @@ import { buildPostTemplate } from '../lib/communityTemplates.js';
 
 export const data = new SlashCommandBuilder()
   .setName('posttemplate')
-  .setDescription('Get a copyable Markdown template for a community post.')
+  .setDescription('Get a Markdown template for a community post.')
   .addStringOption((option) =>
     option
       .setName('type')
-      .setDescription('The kind of post you are preparing')
+      .setDescription('Type of post')
       .setRequired(true)
       .addChoices(
         { name: 'Build help', value: 'build_help' },

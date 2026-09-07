@@ -9,7 +9,7 @@ import { isoWeek, previousIsoWeek } from '../lib/week.js';
 
 export const data = new SlashCommandBuilder()
   .setName('postleaderboard')
-  .setDescription('(Mod) Post the weekly feedback leaderboard to the leaderboard channel now.')
+  .setDescription('(Mod) Post the weekly feedback leaderboard now.')
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addStringOption((o) =>
     o

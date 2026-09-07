@@ -15,6 +15,8 @@ import sharp from 'sharp';
 import { REST } from 'discord.js';
 import { config } from '../src/config.js';
 import { initFirebase, getDb } from '../src/firebase.js';
+import { findOwnerReplyImage } from '../src/lib/threadImages.js';
+import { checkGameApproval } from '../src/lib/gameApproval.js';
 import {
   parsePublishTagId,
   preserveGeneratedAtIfUnchanged,
@@ -30,7 +32,6 @@ import {
 } from './site-export-contract.mjs';
 import {
   DISCORD_SNOWFLAKE_RE,
-  checkShowcaseEligibility,
   extractText,
   getChannel,
   getForumTagMap,
@@ -210,39 +211,15 @@ async function downloadOptimizedAttachment(
 // ---------- Discord REST helpers ----------
 // getChannel / getStarterMessage / isMissingResource live in site-export-shared.mjs.
 
-// Fallback for threads whose starter message has no image: scan up to the first 50
-// messages after the starter (a single 100-message page, per the shared image-presence
-// rule) for the earliest one from the thread owner that carries an image attachment.
-async function findOwnerFallbackImage(rest, threadId, ownerId) {
-  if (!ownerId) return null;
-  let messages;
-  try {
-    messages = await rest.get(`/channels/${threadId}/messages`, {
-      query: new URLSearchParams({ after: threadId, limit: '100' }),
-    });
-  } catch (err) {
-    if (isMissingResource(err)) return null;
-    throw err;
-  }
-  if (!Array.isArray(messages) || !messages.length) return null;
-
-  // Discord returns newest-first; sort ascending by snowflake so we can walk forward
-  // from the starter and stop at the earliest qualifying message.
-  const sorted = [...messages].sort((a, b) => {
-    const ai = BigInt(a.id);
-    const bi = BigInt(b.id);
-    if (ai < bi) return -1;
-    if (ai > bi) return 1;
-    return 0;
+// Use the same bounded owner-reply search as the nudge. Failed history reads abort
+// the candidate export rather than silently replacing a valid image with a placeholder.
+function findOwnerFallbackImage(rest, threadId, ownerId) {
+  return findOwnerReplyImage({
+    threadId,
+    ownerId,
+    fetchPage: (options) => rest.get(`/channels/${threadId}/messages`, { query: new URLSearchParams(options) }),
+    findImage: findImageAttachment,
   });
-
-  for (const message of sorted.slice(0, 50)) {
-    if (message.author && message.author.id === ownerId) {
-      const att = findImageAttachment(message);
-      if (att) return att;
-    }
-  }
-  return null;
 }
 
 // getForumTagMap lives in site-export-shared.mjs (also used by the Phase 3 migration
@@ -461,27 +438,28 @@ async function buildProjectImage({
   };
 }
 
-function buildActivityGroups(threadDocs, publishedById) {
-  const groups = new Map();
-  for (const doc of threadDocs) {
-    const data = doc && typeof doc.data === 'function' ? doc.data() : null;
-    // Malformed records cannot carry exact publication consent. Ignore them unless a
-    // Project references them directly, in which case the source validator fails closed.
-    if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
-    if (data.publishOnProject !== true) continue;
-    const prepared = publishedById.get(data.projectId);
-    // A Thread flag cannot publish its parent Project. Leave activities attached to an
-    // unpublished Project private without reading their Discord channel.
-    if (!prepared) continue;
-    if (!['feedback', 'project-update', 'jam-entry'].includes(data.purpose)) {
-      throw new Error(`Project ${prepared.id} activity thread ${doc.id} has an invalid purpose`);
-    }
-    assertProjectSourceThread(doc, prepared, `activity thread ${doc.id}`);
-    const group = groups.get(prepared.id) || [];
-    group.push(doc);
-    groups.set(prepared.id, group);
+function assertSingleProjectSource(threadDocs, prepared) {
+  if (!prepared.profileThreadId) {
+    throw new Error(`Project ${prepared.id} has no fixed profileThreadId source association`);
   }
-  return groups;
+  if (prepared.mediaThreadIds.some((threadId) => threadId !== prepared.profileThreadId)) {
+    throw new Error(`Project ${prepared.id} mediaThreadIds must reference only its fixed source thread`);
+  }
+  const linked = threadDocs.filter((doc) => {
+    const data = doc && typeof doc.data === 'function' ? doc.data() : null;
+    return data && typeof data === 'object' && !Array.isArray(data) && data.projectId === prepared.id;
+  });
+  if (linked.length !== 1) {
+    throw new Error(`Project ${prepared.id} must have exactly one registered source thread backlink`);
+  }
+  const source = assertProjectSourceThread(linked[0], prepared, 'fixed source thread');
+  if (source.threadId !== prepared.profileThreadId) {
+    throw new Error(`Project ${prepared.id} registered source thread does not match profileThreadId`);
+  }
+  if (source.data.mode !== 'showcase') {
+    throw new Error(`Project ${prepared.id} fixed source thread must use showcase mode`);
+  }
+  return source;
 }
 
 export async function runProjectsFlow(
@@ -494,59 +472,42 @@ export async function runProjectsFlow(
   const threadsSnap = await db.collection('threads').get();
   const threadDocs = threadsSnap.docs || [];
   const threadDocsById = new Map(threadDocs.map((doc) => [doc.id, doc]));
-  const publishedById = new Map(preparedProjects.map((prepared) => [prepared.id, prepared]));
-  const activityGroups = buildActivityGroups(threadDocs, publishedById);
   const channelCache = new Map();
   const projects = [];
   const generatedAssets = [];
+  const withheldProjectIds = new Set();
+  const exportedProjectIds = new Set();
 
   for (const prepared of preparedProjects) {
-    const derivedActivities = [];
-    for (const doc of activityGroups.get(prepared.id) || []) {
-      const source = assertProjectSourceThread(doc, prepared, `activity thread ${doc.id}`);
-      const channel = await getPublicProjectThread(
-        rest,
-        source,
-        prepared,
-        `activity thread ${doc.id}`,
-        channelCache,
-      );
-      const activityTitle = normalizeOptionalText(
-        source.data.activityTitle,
-        `Project ${prepared.id} activity thread ${doc.id} activityTitle`,
-        160,
-      );
-      const fallbackTitle = truncate((channel.name || '').trim(), 160);
-      derivedActivities.push(normalizeProjectActivity({
-        type: source.data.purpose,
-        title: activityTitle ?? fallbackTitle,
-        date: resolveCreatedAt(channel, source.data, source.threadId),
-        summary: normalizeOptionalText(
-          source.data.activitySummary,
-          `Project ${prepared.id} activity thread ${doc.id} activitySummary`,
-          500,
-        ),
-        url: `https://discord.com/channels/${config.guildId}/${source.threadId}`,
-      }, `Project ${prepared.id} activity thread ${doc.id}`));
+    const source = assertSingleProjectSource(threadDocs, prepared);
+    const approval = await checkGameApproval(rest, {
+      threadId: source.threadId,
+      ownerId: prepared.ownerId,
+      forumId: source.data.forumId,
+      guildId: config.guildId,
+      publishTagId: args.publishTagId,
+    });
+    if (!approval.approved) {
+      withheldProjectIds.add(prepared.id);
+      continue;
     }
+    channelCache.set(source.threadId, approval.channel);
 
     let hero = null;
-    if (prepared.profileThreadId) {
-      const result = await buildProjectImage({
-        rest,
-        threadDocsById,
-        prepared,
-        threadId: prepared.profileThreadId,
-        role: 'profile thread',
-        baseName: 'hero',
-        optional: true,
-        args,
-        channelCache,
-        downloadAttachment,
-      });
-      hero = result.media;
-      if (result.asset) generatedAssets.push(result.asset);
-    }
+    const result = await buildProjectImage({
+      rest,
+      threadDocsById,
+      prepared,
+      threadId: prepared.profileThreadId,
+      role: 'profile thread',
+      baseName: 'hero',
+      optional: true,
+      args,
+      channelCache,
+      downloadAttachment,
+    });
+    hero = result.media;
+    if (result.asset) generatedAssets.push(result.asset);
 
     const media = [];
     for (const [index, threadId] of prepared.mediaThreadIds.entries()) {
@@ -566,13 +527,33 @@ export async function runProjectsFlow(
       if (result.asset) generatedAssets.push(result.asset);
     }
 
+    const derivedActivities = [];
+    if (source.data.publishOnProject === true) {
+      if (!['feedback', 'project-update', 'jam-entry'].includes(source.data.purpose)) {
+        throw new Error(`Project ${prepared.id} fixed source activity has an invalid purpose`);
+      }
+      derivedActivities.push(normalizeProjectActivity({
+        type: source.data.purpose,
+        title: normalizeOptionalText(source.data.activityTitle, 'fixed source activity title', 160)
+          ?? truncate((approval.channel.name || prepared.project.title).trim(), 160),
+        date: resolveCreatedAt(approval.channel, source.data, source.threadId),
+        summary: normalizeOptionalText(source.data.activitySummary, 'fixed source activity summary', 500),
+        url: `https://discord.com/channels/${config.guildId}/${source.threadId}`,
+      }, `Project ${prepared.id} fixed source activity`));
+    }
     projects.push(finalizeProjectExport(prepared, { hero, media, derivedActivities }));
+    exportedProjectIds.add(prepared.id);
   }
 
-  return { projects, generatedAssets };
+  return {
+    projects,
+    generatedAssets,
+    withheldProjectIds: [...withheldProjectIds].sort(),
+    exportedProjectIds,
+  };
 }
 
-function resolveShowcaseProjectFields(data, channel, threadId, projectsById) {
+function resolveShowcaseProjectFields(data, channel, threadId, projectsById, exportedProjectIds) {
   const activityTitle = normalizeOptionalText(data.activityTitle, `thread ${threadId} activityTitle`, 160);
   if (data.projectId == null) {
     return { activityTitle, projectId: null, projectSlug: null, state: null };
@@ -580,8 +561,13 @@ function resolveShowcaseProjectFields(data, channel, threadId, projectsById) {
 
   const record = projectsById?.get(data.projectId);
   if (!record) throw new Error(`showcase thread ${threadId} links to a missing Project ${data.projectId}`);
-  if (!record.prepared || record.data.publishToSite !== true) {
+  // Owner intent alone never creates a public Project link. A Project that was
+  // withheld by the live moderation gate must not leave a dangling id or slug.
+  if (!record.prepared || record.data.publishToSite !== true || !exportedProjectIds.has(record.id)) {
     return { activityTitle, projectId: null, projectSlug: null, state: null };
+  }
+  if (record.prepared.profileThreadId !== threadId) {
+    throw new Error(`showcase thread ${threadId} is not Project ${data.projectId}'s fixed source thread`);
   }
   if (data.ownerId !== record.prepared.ownerId) {
     throw new Error(`showcase thread ${threadId} owner does not match Project ${data.projectId}`);
@@ -605,51 +591,34 @@ function resolveShowcaseProjectFields(data, channel, threadId, projectsById) {
 
 async function processShowcaseThread(docSnap, ctx) {
   const {
-    rest, forumTagCache, pointsMap, dryRun, outDir, publishTagId, sourceForumIds,
-    withheldIds, projectsById,
+    rest, forumTagCache, pointsMap, dryRun, outDir, publishTagId,
+    withheldIds, projectsById, exportedProjectIds,
   } = ctx;
   const threadId = docSnap.id;
   const data = docSnap.data();
 
-  let channel;
-  try {
-    channel = await getChannel(rest, threadId);
-  } catch (err) {
-    if (isMissingResource(err)) {
-      console.warn(`[export] warn: thread ${threadId} no longer exists, skipping`);
-      withheldIds.add(threadId);
-      return null;
-    }
-    throw err;
+  if (data.mode !== 'showcase' || data.threadId !== threadId
+    || !DISCORD_SNOWFLAKE_RE.test(String(data.ownerId || ''))
+    || !DISCORD_SNOWFLAKE_RE.test(String(data.forumId || ''))) {
+    throw new Error(`showcase thread ${threadId} has an invalid registered source association`);
   }
-
-  // The eligibility decision itself is shared with the Phase 3 migration
-  // (site-export-shared.mjs); only the reporting is exporter-specific.
-  const eligibility = checkShowcaseEligibility({
-    channel,
-    firestoreData: data,
-    sourceForumIds,
+  const approval = await checkGameApproval(rest, {
+    threadId,
+    ownerId: data.ownerId,
+    forumId: data.forumId,
+    guildId: config.guildId,
     publishTagId,
   });
-  if (eligibility.status === 'uncertain-forum') {
-    const forumId = channel.parent_id || null;
-    console.warn(`[export] warn: thread ${threadId} has an uncertain source forum (${forumId}), skipping`);
+  if (!approval.approved) {
     withheldIds.add(threadId);
     return null;
   }
-  if (eligibility.status === 'no-applied-tags') {
-    console.warn(`[export] warn: thread ${threadId} did not return applied_tags, skipping`);
-    withheldIds.add(threadId);
-    return null;
-  }
-  if (eligibility.status === 'not-published') {
-    withheldIds.add(threadId);
-    return null;
-  }
-  const projectFields = resolveShowcaseProjectFields(data, channel, threadId, projectsById);
+  const channel = approval.channel;
+  const projectFields = resolveShowcaseProjectFields(
+    data, channel, threadId, projectsById, exportedProjectIds,
+  );
 
-  // Eligible from here: the shared decision carries the verified forum id.
-  const tagMap = await getForumTagMap(rest, eligibility.forumId, forumTagCache);
+  const tagMap = await getForumTagMap(rest, data.forumId, forumTagCache);
   const appliedTags = channel.applied_tags.map((id) => {
     const tag = tagMap.get(id);
     if (!tag) throw new Error(`showcase thread ${threadId} has an unknown tag ${id}`);
@@ -712,39 +681,14 @@ async function processShowcaseThread(docSnap, ctx) {
   };
 }
 
-async function runShowcaseFlow(rest, db, args, projectsById) {
+async function runShowcaseFlow(rest, db, args, projectsById, exportedProjectIds) {
   const pointsMap = await buildFeedbackPointsMap(db);
   const threadsSnap = await db.collection('threads').where('mode', '==', 'showcase').get();
   let threadDocs = threadsSnap.docs;
   if (args.limit) threadDocs = threadDocs.slice(0, args.limit);
 
-  const sourceForumIds = new Set();
-  for (const docSnap of threadDocs) {
-    const forumId = docSnap.data().forumId;
-    if (!forumId || !/^\d{17,20}$/.test(forumId)) {
-      throw new Error(`showcase thread ${docSnap.id} has no valid source forum id`);
-    }
-    sourceForumIds.add(forumId);
-  }
-
   const forumTagCache = new Map();
   const awardEmojiCache = new Map();
-  for (const forumId of sourceForumIds) {
-    let tags;
-    try {
-      tags = await getForumTagMap(rest, forumId, forumTagCache);
-    } catch (err) {
-      if (isMissingResource(err)) {
-        console.warn(`[export] warn: forum ${forumId} no longer exists, skipping its threads`);
-        sourceForumIds.delete(forumId);
-        continue;
-      }
-      throw err;
-    }
-    if (!tags.has(args.publishTagId)) {
-      throw new Error(`SITE_PUBLISH_TAG_ID is not available in showcase forum ${forumId}`);
-    }
-  }
 
   const games = [];
   const missingScreenshots = [];
@@ -760,9 +704,9 @@ async function runShowcaseFlow(rest, db, args, projectsById) {
       dryRun: args.dryRun,
       outDir: args.out,
       publishTagId: args.publishTagId,
-      sourceForumIds,
       withheldIds,
       projectsById,
+      exportedProjectIds,
     });
     if (!result) continue;
     games.push(result.game);
@@ -952,11 +896,12 @@ async function fetchGuildMemberCount(rest, guildId) {
 
 // ---------- summary ----------
 
-function printSummary({ projects, games, missingScreenshots, recoveredCount, jams, jamsRequested, filesWritten, dryRun }) {
+function printSummary({ projects, games, missingScreenshots, recoveredCount, jams, jamsRequested, filesWritten, dryRun, withheldProjectIds }) {
   console.log('');
   console.log('=== export-site-data summary ===');
   console.log(`Projects exported: ${projects.length}`);
   console.log(`Games exported: ${games.length}`);
+  console.log(`Projects withheld by moderation: ${withheldProjectIds.length}`);
   if (missingScreenshots.length) {
     console.log(`Games missing screenshots (${missingScreenshots.length}):`);
     for (const title of missingScreenshots) console.log(`  - ${title}`);
@@ -992,7 +937,7 @@ async function main() {
 
   const projectsSnap = await db.collection('projects').get();
   const preparedProjects = prepareProjectExports(projectsSnap.docs);
-  const { projects, generatedAssets } = await runProjectsFlow(
+  const { projects, generatedAssets, withheldProjectIds, exportedProjectIds } = await runProjectsFlow(
     rest,
     db,
     preparedProjects.published,
@@ -1000,7 +945,7 @@ async function main() {
   );
 
   const { games, missingScreenshots, recoveredCount, totalFeedbackPoints, withheldIds } =
-    await runShowcaseFlow(rest, db, args, preparedProjects.allById);
+    await runShowcaseFlow(rest, db, args, preparedProjects.allById, exportedProjectIds);
 
   const memberCount = await fetchGuildMemberCount(rest, config.guildId);
   const stats = {
@@ -1030,7 +975,7 @@ async function main() {
       .filter(({ data }) => data.publishToSite !== true)
       .map(({ id }) => id)
       .sort();
-    await writeReport(args.report, { version: 1, withheldIds, unpublishedProjectIds });
+    await writeReport(args.report, { version: 1, withheldIds, withheldProjectIds, unpublishedProjectIds });
     filesWritten.push(args.report);
     filesWritten.push(await writeJson(args.out, 'projects.json', {
       version: 1,
@@ -1062,6 +1007,7 @@ async function main() {
     jamsRequested,
     filesWritten,
     dryRun: args.dryRun,
+    withheldProjectIds,
   });
 
   const exportedNothing = projects.length === 0 && games.length === 0 && (!jamsRequested || jams.length === 0);

@@ -89,7 +89,7 @@ async function notify({ guild, userId, userTag, threshold, total, cfg }) {
         `<@${userId}>${userTag ? ` (${userTag})` : ''} just passed **${threshold} points**.`,
         `All-time total: **${total}**`,
         '',
-        '_No role was applied — send them a thank-you and assign a reward if it fits._',
+        '_No role was applied. Send a thank-you and assign a reward if it fits._',
       ].join('\n'),
     )
     .setTimestamp();

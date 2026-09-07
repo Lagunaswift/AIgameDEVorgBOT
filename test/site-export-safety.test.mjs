@@ -229,6 +229,18 @@ test('malformed export reports are rejected', () => {
   assert.throws(() => validateExportReport({ version: 1, withheldIds: ['not-a-snowflake'] }), /invalid withheld id/);
   assert.throws(() => validateExportReport({ version: 1, withheldIds: ['12345678901234567', '12345678901234567'] }), /duplicate withheld id/);
   assert.throws(() => validateExportReport({ version: 1, withheldIds: [], unpublishedProjectIds: ['../private'] }), /invalid unpublished Project id/);
+  assert.throws(() => validateExportReport({ version: 1, withheldIds: [], withheldProjectIds: ['../private'] }), /invalid withheld Project id/);
+});
+
+test('Project snapshot removals require moderation withholding or owner unpublish evidence', () => {
+  const previous = projectsSnapshot([project()]);
+  assert.throws(() => validateProjectsSnapshot(projectsSnapshot([]), previous), /would remove non-withheld Project/);
+  assert.doesNotThrow(() => validateProjectsSnapshot(projectsSnapshot([]), previous, {
+    version: 1, withheldIds: [], withheldProjectIds: ['project-1'], unpublishedProjectIds: [],
+  }));
+  assert.doesNotThrow(() => validateProjectsSnapshot(projectsSnapshot([]), previous, {
+    version: 1, withheldIds: [], unpublishedProjectIds: ['project-1'],
+  }));
 });
 
 test('unchanged semantic snapshots retain generatedAt', () => {

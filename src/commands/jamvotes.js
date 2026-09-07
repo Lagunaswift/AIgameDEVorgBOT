@@ -183,7 +183,7 @@ export async function execute(interaction) {
       entry.rank <= MEDALS.length && !tie ? MEDALS[entry.rank - 1] : `**${tie ? 'T' : ''}${entry.rank}.**`;
     const votes = entry.votes === 1 ? '1 vote' : `${entry.votes} votes`;
     const owner = entry.ownerId ? ` · by <@${entry.ownerId}>` : '';
-    return `${pos} ${entry.link} - **${votes}**${owner}`;
+    return `${pos} ${entry.link}: **${votes}**${owner}`;
   });
 
   const zeroCount = entries.length - entries.filter((e) => e.votes > 0).length;
@@ -202,7 +202,7 @@ export async function execute(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor(0xd95d1e)
-    .setTitle(`🏆 Jam Vote Tally - ${jamTag.name}`)
+    .setTitle(`🏆 Jam vote tally: ${jamTag.name}`)
     .setDescription([header, '', ...lines].join('\n'));
 
   if (footerBits.length) embed.setFooter({ text: footerBits.join(' · ') });

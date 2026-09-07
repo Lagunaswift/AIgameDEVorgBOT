@@ -107,7 +107,7 @@ export async function execute(interaction) {
 
   const emojiSpec = parseEmojiSpec(emojiRaw);
   if (!emojiSpec) {
-    await interaction.editReply('That vote emoji looks empty — try `emoji:logocomp`.');
+    await interaction.editReply('That vote emoji looks empty. Try `emoji:logocomp`.');
     return;
   }
 
@@ -132,7 +132,7 @@ export async function execute(interaction) {
     const pos = entry.rank <= MEDALS.length && !tie ? MEDALS[entry.rank - 1] : `**${tie ? 'T' : ''}${entry.rank}.**`;
     const votes = entry.votes === 1 ? '1 vote' : `${entry.votes} votes`;
     const owner = entry.ownerId ? ` · by <@${entry.ownerId}>` : '';
-    return `${pos} ${entry.link} — **${votes}**${owner}`;
+    return `${pos} ${entry.link}: **${votes}**${owner}`;
   });
 
   const zeroCount = entries.length - entries.filter((e) => e.votes > 0).length;
@@ -141,7 +141,7 @@ export async function execute(interaction) {
   if (voterScope !== VoterScope.ALL && totals.ownerSelfVotes > 0) {
     footerBits.push(`${totals.ownerSelfVotes} owner self-vote${totals.ownerSelfVotes === 1 ? '' : 's'} not counted`);
   }
-  if (totals.truncated) footerBits.push('scan limit reached — some older messages skipped');
+  if (totals.truncated) footerBits.push('scan limit reached; some older messages were skipped');
 
   const header = [
     `Channel: <#${channelId}> · Vote: ${emojiLabel(emojiSpec)}`,
@@ -151,7 +151,7 @@ export async function execute(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor(0x39ff14)
-    .setTitle('🏆 Logo Competition — Vote Tally')
+    .setTitle('🏆 Logo competition: vote tally')
     .setDescription([header, '', ...lines].join('\n'));
 
   if (footerBits.length) embed.setFooter({ text: footerBits.join(' · ') });

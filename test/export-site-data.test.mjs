@@ -21,8 +21,9 @@ function restFor({ consent = true, guildId = GUILD, archived = false } = {}) {
     async get(url) {
       if (url === `/channels/${FORUM}`) {
         return {
+          id: FORUM, guild_id: GUILD, type: 15,
           available_tags: [
-            { id: PUBLISH_TAG, name: 'Publish to site', emoji_id: null, emoji_name: null },
+            { id: PUBLISH_TAG, name: 'Publish to site', moderated: true, emoji_id: null, emoji_name: null },
             { id: WEB_TAG, name: 'web', emoji_id: null, emoji_name: null },
           ],
         };
@@ -31,7 +32,7 @@ function restFor({ consent = true, guildId = GUILD, archived = false } = {}) {
         if (!consent) throw Object.assign(new Error('404'), { status: 404 });
         return {
           id: THREAD, parent_id: FORUM, guild_id: guildId, name: 'Guild Game', owner_id: OWNER,
-          applied_tags: [PUBLISH_TAG, WEB_TAG], thread_metadata: { archived },
+          type: 11, applied_tags: [PUBLISH_TAG, WEB_TAG], thread_metadata: { archived },
         };
       }
       if (url === `/channels/${THREAD}/messages/${THREAD}`) {
@@ -63,7 +64,7 @@ function ctx(overrides = {}) {
 }
 
 function docSnap(data) {
-  return { id: THREAD, data: () => data };
+  return { id: THREAD, data: () => ({ threadId: THREAD, ...data }) };
 }
 
 test('eligible public threads are exported through the shared eligibility decision', async () => {
@@ -91,7 +92,7 @@ test('linked showcase threads export only their exact same-owner published Proje
   const projectsById = new Map([['project-1', {
     id: 'project-1',
     data: { projectId: 'project-1', ownerId: OWNER, publishToSite: true },
-    prepared: { id: 'project-1', ownerId: OWNER, project: { slug: 'guild-game' } },
+    prepared: { id: 'project-1', ownerId: OWNER, profileThreadId: THREAD, project: { slug: 'guild-game' } },
   }]]);
   const result = await processShowcaseThread(docSnap({
     threadId: THREAD,
@@ -104,7 +105,7 @@ test('linked showcase threads export only their exact same-owner published Proje
     activityTitle: 'Enemy timing pass',
     projectUrl: null,
     jamId: null,
-  }), ctx({ projectsById }));
+  }), ctx({ projectsById, exportedProjectIds: new Set(['project-1']) }));
 
   assert.equal(result.game.projectId, 'project-1');
   assert.equal(result.game.projectSlug, 'guild-game');
@@ -114,21 +115,19 @@ test('linked showcase threads export only their exact same-owner published Proje
   const archived = await processShowcaseThread(docSnap({
     threadId: THREAD, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
     projectId: 'project-1', activityTitle: null,
-  }), ctx({ rest: restFor({ archived: true }), projectsById }));
+  }), ctx({ rest: restFor({ archived: true }), projectsById, exportedProjectIds: new Set(['project-1']) }));
   assert.equal(archived.game.state, 'archived');
 
-  await assert.rejects(
-    processShowcaseThread(docSnap({
-      threadId: THREAD, forumId: FORUM, ownerId: '234567890123456789', mode: 'showcase',
-      projectId: 'project-1', activityTitle: null,
-    }), ctx({ projectsById })),
-    /owner/i,
-  );
+  const wrongOwner = await processShowcaseThread(docSnap({
+    threadId: THREAD, forumId: FORUM, ownerId: '234567890123456789', mode: 'showcase',
+    projectId: 'project-1', activityTitle: null,
+  }), ctx({ projectsById, exportedProjectIds: new Set(['project-1']) }));
+  assert.equal(wrongOwner, null, 'a live owner mismatch is withheld before private content is read');
   await assert.rejects(
     processShowcaseThread(docSnap({
       threadId: THREAD, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
       projectId: 'missing-project', activityTitle: null,
-    }), ctx({ projectsById })),
+    }), ctx({ projectsById, exportedProjectIds: new Set(['project-1']) })),
     /missing Project/i,
   );
 });
@@ -138,10 +137,10 @@ test('non-published and missing threads are withheld exactly as before', async (
   const noTagRest = {
     async get(url) {
       if (url === `/channels/${FORUM}`) {
-        return { available_tags: [{ id: PUBLISH_TAG, name: 'Publish to site' }, { id: WEB_TAG, name: 'web' }] };
+        return { id: FORUM, guild_id: GUILD, type: 15, available_tags: [{ id: PUBLISH_TAG, name: 'Publish to site', moderated: true }, { id: WEB_TAG, name: 'web' }] };
       }
       if (url === `/channels/${THREAD}`) {
-        return { id: THREAD, parent_id: FORUM, guild_id: GUILD, applied_tags: [WEB_TAG], thread_metadata: { archived: false } };
+        return { id: THREAD, parent_id: FORUM, guild_id: GUILD, owner_id: OWNER, type: 11, applied_tags: [WEB_TAG], thread_metadata: { archived: false } };
       }
       throw new Error(`unexpected url ${url}`);
     },
@@ -158,4 +157,74 @@ test('non-published and missing threads are withheld exactly as before', async (
   }), ctx({ rest: restFor({ consent: false }), withheldIds: missing }));
   assert.equal(gone, null);
   assert.ok(missing.has(THREAD), 'missing channel is withheld');
+});
+
+test('an owner-unpublished Project leaves its approved Showcase card unlinked', async () => {
+  const projectsById = new Map([['project-1', {
+    id: 'project-1',
+    data: { projectId: 'project-1', ownerId: OWNER, publishToSite: false },
+    prepared: null,
+  }]]);
+  const result = await processShowcaseThread(docSnap({
+    threadId: THREAD, forumId: FORUM, ownerId: OWNER, mode: 'showcase', projectId: 'project-1',
+  }), ctx({ projectsById, exportedProjectIds: new Set() }));
+  assert.equal(result.game.projectId, null);
+  assert.equal(result.game.projectSlug, null);
+  assert.equal(result.game.state, null);
+});
+
+test('Showcase recovers the owners reply image beyond the former fifty-message cutoff', async () => {
+  const base = restFor();
+  const rest = {
+    async get(url, options) {
+      if (url === `/channels/${THREAD}/messages`) {
+        return Array.from({ length: 80 }, (_, index) => ({
+          id: String(BigInt(THREAD) + BigInt(index + 1)),
+          author: { id: index === 1 ? '234567890123456789' : OWNER },
+          attachments: index === 1 || index === 79 ? [{ url: 'https://cdn.discordapp.com/game.png', filename: 'game.png' }] : [],
+        })).reverse();
+      }
+      return base.get(url, options);
+    },
+  };
+  const result = await processShowcaseThread(docSnap({
+    threadId: THREAD, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
+  }), ctx({ rest }));
+  assert.equal(result.hasImage, true);
+  assert.equal(result.recovered, true);
+  assert.equal(result.game.image, `/assets/showcase/${THREAD}.webp`);
+});
+
+test('Showcase REST image search can recover a fresh upload in a long thread', async () => {
+  const base = restFor();
+  let pages = 0;
+  const rest = { async get(url, options) {
+    if (url !== `/channels/${THREAD}/messages`) return base.get(url, options);
+    pages++;
+    assert.equal(options.query.get('limit'), '100');
+    const after = options.query.get('after');
+    if (!after) return [{
+      id: String(BigInt(THREAD) + 10000n), author: { id: OWNER },
+      attachments: [{ filename: 'fresh.png', url: 'https://cdn.discordapp.com/fresh.png' }],
+    }];
+    return Array.from({ length: 100 }, (_, index) => ({
+      id: String(BigInt(after) + BigInt(index + 1)), author: { id: OWNER }, attachments: [],
+    })).reverse();
+  } };
+  const result = await processShowcaseThread(docSnap({
+    threadId: THREAD, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
+  }), ctx({ rest }));
+  assert.equal(result.hasImage, true);
+  assert.equal(pages, 6);
+});
+
+test('Showcase does not silently clear an image when reply history is unavailable', async () => {
+  const base = restFor();
+  const rest = { async get(url, options) {
+    if (url === `/channels/${THREAD}/messages`) throw Object.assign(new Error('history forbidden'), { status: 403 });
+    return base.get(url, options);
+  } };
+  await assert.rejects(processShowcaseThread(docSnap({
+    threadId: THREAD, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
+  }), ctx({ rest })), /history forbidden/);
 });

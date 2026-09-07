@@ -10,6 +10,7 @@ import {
 } from '../src/lib/projectValidation.js';
 import {
   buildProjectRecord,
+  createAndPublishProjectForThreadTransaction,
   linkThreadToProjectTransaction,
   setProjectPublicationTransaction,
   updateOwnedProjectTransaction,
@@ -37,7 +38,7 @@ function project(overrides = {}) {
     projectUrl: null,
     platforms: ['web'],
     publishToSite: false,
-    profileThreadId: null,
+    profileThreadId: THREAD_ONE,
     ...overrides,
   };
 }
@@ -45,7 +46,7 @@ function project(overrides = {}) {
 function store({ thread = null, project: projectData = project() } = {}) {
   const writes = [];
   const reads = [];
-  const data = { thread, project: projectData };
+  const data = { thread: thread ? { mode: 'showcase', ...thread } : thread, project: projectData };
   const transaction = {
     async get(ref) {
       reads.push(ref.kind);
@@ -58,8 +59,9 @@ function store({ thread = null, project: projectData = project() } = {}) {
   };
   return {
     transaction,
-    projectRef: { kind: 'project' },
-    threadRef: { kind: 'thread' },
+    projectRef: { kind: 'project', id: 'new-project' },
+    threadRef: { kind: 'thread', id: thread?.threadId || THREAD_ONE },
+    threadRefFor: (id) => ({ kind: 'thread', id }),
     reads,
     writes,
     data,
@@ -148,24 +150,42 @@ test('project owner can update only editable fields and no-op or protected chang
   );
 });
 
-test('publication changes only dormant Project publication state and require the owner', async () => {
-  const state = store();
+test('publication requires the owner and an exact fixed-source backlink', async () => {
+  const state = store({ thread: { threadId: THREAD_ONE, ownerId: OWNER, projectId: 'project-1' } });
+  state.projectRef.id = 'project-1';
   await setProjectPublicationTransaction({
-    transaction: state.transaction, projectRef: state.projectRef, actorId: OWNER, publishToSite: true, timestamp: 'now',
+    transaction: state.transaction, projectRef: state.projectRef, threadRefFor: state.threadRefFor, threadId: THREAD_ONE, actorId: OWNER, publishToSite: true, timestamp: 'now',
   });
   assert.deepEqual(state.writes, [{ kind: 'project', update: { publishToSite: true, updatedAt: 'now' } }]);
   assert.equal(state.data.project.slug, 'test-game');
+  state.data.thread.projectId = 'other-project';
+  const writesBeforeInvalidBacklink = state.writes.length;
   await assert.rejects(
-    setProjectPublicationTransaction({ transaction: state.transaction, projectRef: state.projectRef, actorId: OTHER, publishToSite: false, timestamp: 'later' }),
+    setProjectPublicationTransaction({ transaction: state.transaction, projectRef: state.projectRef, threadRefFor: state.threadRefFor, threadId: THREAD_ONE, actorId: OWNER, publishToSite: true, timestamp: 'later' }),
+    /backlink is invalid/,
+  );
+  assert.equal(state.writes.length, writesBeforeInvalidBacklink);
+  await assert.rejects(
+    setProjectPublicationTransaction({ transaction: state.transaction, projectRef: state.projectRef, threadRefFor: state.threadRefFor, actorId: OTHER, publishToSite: false, timestamp: 'later' }),
     /Only the project owner/,
   );
   await assert.rejects(
-    setProjectPublicationTransaction({ transaction: state.transaction, projectRef: state.projectRef, actorId: OWNER, publishToSite: 'true', timestamp: 'later' }),
+    setProjectPublicationTransaction({ transaction: state.transaction, projectRef: state.projectRef, threadRefFor: state.threadRefFor, actorId: OWNER, publishToSite: 'true', timestamp: 'later' }),
     /must be a boolean/,
   );
 });
 
-test('thread linking requires shared ownership, rejects relinks, permits many threads, and does not touch points', async () => {
+test('approval of a different thread cannot republish this Project', async () => {
+  const state = store({ thread: { threadId: THREAD_ONE, ownerId: OWNER, projectId: 'project-1' } });
+  state.projectRef.id = 'project-1';
+  await assert.rejects(setProjectPublicationTransaction({
+    transaction: state.transaction, projectRef: state.projectRef, threadRefFor: state.threadRefFor,
+    threadId: THREAD_TWO, actorId: OWNER, publishToSite: true, timestamp: 'now',
+  }), /source thread association is invalid/);
+  assert.equal(state.writes.length, 0);
+});
+
+test('internal linking permits only the fixed source thread and does not touch points', async () => {
   const state = store({ thread: { threadId: THREAD_ONE, ownerId: OWNER, projectId: null, purpose: null } });
   await linkThreadToProjectTransaction({
     transaction: state.transaction, threadRef: state.threadRef, projectRef: state.projectRef,
@@ -184,18 +204,27 @@ test('thread linking requires shared ownership, rejects relinks, permits many th
   await assert.rejects(
     linkThreadToProjectTransaction({
       transaction: state.transaction, threadRef: state.threadRef, projectRef: state.projectRef,
+      actorId: OWNER, projectId: 'project-1', purpose: 'feedback', rejectExistingLink: true,
+    }),
+    /already linked to a project/,
+  );
+  await assert.rejects(
+    linkThreadToProjectTransaction({
+      transaction: state.transaction, threadRef: state.threadRef, projectRef: state.projectRef,
       actorId: OWNER, projectId: 'project-2', purpose: 'feedback',
     }),
-    /already linked to a different project/,
+    /already linked to a project/,
   );
 
   const secondThread = store({ thread: { threadId: THREAD_TWO, ownerId: OWNER, projectId: null, purpose: null } });
-  await linkThreadToProjectTransaction({
-    transaction: secondThread.transaction, threadRef: secondThread.threadRef, projectRef: secondThread.projectRef,
-    actorId: OWNER, projectId: 'project-1', purpose: 'project-update',
-  });
-  assert.equal(secondThread.data.thread.projectId, 'project-1');
-  assert.equal(secondThread.data.thread.purpose, 'project-update');
+  await assert.rejects(
+    linkThreadToProjectTransaction({
+      transaction: secondThread.transaction, threadRef: secondThread.threadRef, projectRef: secondThread.projectRef,
+      actorId: OWNER, projectId: 'project-1', purpose: 'project-update',
+    }),
+    /source thread does not match/,
+  );
+  assert.deepEqual(secondThread.writes, []);
 
   const nonOwner = store({ thread: { threadId: THREAD_ONE, ownerId: OTHER, projectId: null, purpose: null } });
   await assert.rejects(
@@ -217,4 +246,110 @@ test('thread linking requires shared ownership, rejects relinks, permits many th
     }),
     /Only the project owner/,
   );
+
+  const mismatchedThreadIdentity = store({
+    thread: { threadId: THREAD_TWO, ownerId: OWNER, projectId: null, purpose: null },
+  });
+  mismatchedThreadIdentity.threadRef.id = THREAD_ONE;
+  await assert.rejects(
+    linkThreadToProjectTransaction({
+      transaction: mismatchedThreadIdentity.transaction,
+      threadRef: mismatchedThreadIdentity.threadRef,
+      projectRef: mismatchedThreadIdentity.projectRef,
+      actorId: OWNER,
+      projectId: 'project-1',
+      purpose: 'feedback',
+    }),
+    /identity does not match/,
+  );
+  assert.deepEqual(mismatchedThreadIdentity.writes, []);
+});
+
+test('thread Project creation publishes, reserves a collision-safe slug, and preserves scoring fields', async () => {
+  const state = store({
+    thread: {
+      threadId: THREAD_ONE, ownerId: OWNER, projectId: null, purpose: null,
+      feedbackPointsAwarded: 7, scoringState: { comments: 3 },
+    },
+  });
+  const creates = [];
+  state.transaction.create = (ref, value) => creates.push({ ref, value });
+  const result = await createAndPublishProjectForThreadTransaction({
+    transaction: state.transaction,
+    threadRef: state.threadRef,
+    projectRef: state.projectRef,
+    slugRefFor: (slug) => ({ kind: 'slug', slug }),
+    actorId: OWNER,
+    input: {
+      ownerId: OWNER, title: 'Test Game', summary: 'A game from a thread.', status: 'playable',
+      projectUrl: null, platforms: ['web'], creatorName: 'Maker',
+    },
+    timestamp: 'now',
+    isSlugTaken: async (slug) => slug === 'test-game',
+  });
+  assert.equal(result.project.slug, 'test-game-new-project');
+  assert.equal(result.project.publishToSite, true);
+  assert.equal(result.project.profileThreadId, THREAD_ONE);
+  assert.deepEqual(creates.map(({ ref, value }) => ({ ref, value: value.projectId || value })), [
+    { ref: { kind: 'project', id: 'new-project' }, value: 'new-project' },
+    { ref: { kind: 'slug', slug: 'test-game-new-project' }, value: 'new-project' },
+  ]);
+  assert.deepEqual(state.writes, [{ kind: 'thread', update: { projectId: 'new-project', purpose: 'feedback' } }]);
+  assert.equal(state.data.thread.feedbackPointsAwarded, 7);
+  assert.deepEqual(state.data.thread.scoringState, { comments: 3 });
+
+  const collision = store({ thread: { threadId: THREAD_TWO, ownerId: OWNER, projectId: null, purpose: null } });
+  collision.transaction.create = () => assert.fail('collision must not create records');
+  await assert.rejects(createAndPublishProjectForThreadTransaction({
+    transaction: collision.transaction,
+    threadRef: collision.threadRef,
+    projectRef: collision.projectRef,
+    slugRefFor: (slug) => ({ kind: 'slug', slug }),
+    actorId: OWNER,
+    input: {
+      ownerId: OWNER, title: 'Test Game', summary: 'A game from a thread.', status: 'playable',
+      projectUrl: null, platforms: ['web'], creatorName: 'Maker',
+    },
+    timestamp: 'now',
+    isSlugTaken: async () => true,
+  }), /slug collision/);
+});
+
+test('thread Project creation rejects a malformed or mismatched stored thread identity before writing', async () => {
+  const state = store({ thread: { threadId: THREAD_TWO, ownerId: OWNER, projectId: null, purpose: null } });
+  state.threadRef.id = THREAD_ONE;
+  state.transaction.create = () => assert.fail('mismatched thread identity must not create records');
+  await assert.rejects(createAndPublishProjectForThreadTransaction({
+    transaction: state.transaction,
+    threadRef: state.threadRef,
+    projectRef: state.projectRef,
+    slugRefFor: (slug) => ({ kind: 'slug', slug }),
+    actorId: OWNER,
+    input: {
+      ownerId: OWNER, title: 'Test Game', summary: 'A game from a thread.', status: 'playable',
+      projectUrl: null, platforms: [], creatorName: 'Maker',
+    },
+    timestamp: 'now',
+    isSlugTaken: async () => false,
+  }), /identity does not match/);
+  assert.deepEqual(state.writes, []);
+
+  const wrongProjectOwner = store({
+    thread: { threadId: THREAD_ONE, ownerId: OWNER, projectId: null, purpose: null },
+  });
+  wrongProjectOwner.transaction.create = () => assert.fail('owner mismatch must not create records');
+  await assert.rejects(createAndPublishProjectForThreadTransaction({
+    transaction: wrongProjectOwner.transaction,
+    threadRef: wrongProjectOwner.threadRef,
+    projectRef: wrongProjectOwner.projectRef,
+    slugRefFor: (slug) => ({ kind: 'slug', slug }),
+    actorId: OWNER,
+    input: {
+      ownerId: OTHER, title: 'Test Game', summary: 'A game from a thread.', status: 'playable',
+      projectUrl: null, platforms: [], creatorName: 'Maker',
+    },
+    timestamp: 'now',
+    isSlugTaken: async () => false,
+  }), /Project owner must match/);
+  assert.deepEqual(wrongProjectOwner.writes, []);
 });

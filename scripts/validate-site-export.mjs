@@ -33,7 +33,8 @@ async function main() {
   const report = validateExportReport(await readJson(args.report));
   validateShowcaseSnapshot(candidate, previous, report);
   const projects = await readJson(path.join(args.candidate, 'src', 'data', 'projects.json'));
-  validateProjectsSnapshot(projects);
+  const previousProjects = await readJson(path.join(args.previous, 'src', 'data', 'projects.json'));
+  validateProjectsSnapshot(projects, previousProjects, report);
   validateProjectLinks(candidate, projects);
   const jams = await readJson(path.join(args.candidate, 'src', 'data', 'jams.json'));
   if (jams.version !== 2 || !Array.isArray(jams.jams) || Number.isNaN(Date.parse(jams.generatedAt || ''))) {

@@ -44,7 +44,7 @@ async function boardForWeek(week) {
 // like a contest nobody entered. Mods still see the real figures privately via
 // /leaderboard; the ranking moved rather than disappearing.
 export function describeRoll(week, board) {
-  const header = `<:ShowcaseBotReact:1521124760220729445> **Thanks for the feedback — ${week}**`;
+  const header = `<:ShowcaseBotReact:1521124760220729445> **Thanks for the feedback: ${week}**`;
 
   if (board.length === 0) {
     return `${header}\n\nNo feedback was scored this week.`;
@@ -67,7 +67,7 @@ export function describeRoll(week, board) {
 
   return [
     header,
-    "These folks left helpful feedback on someone's project this week.",
+    'These members left helpful feedback on a project this week.',
     '',
     `<:helpfulfeedback:1521124800204898386> ${names.join(' · ')}` +
       (dropped > 0 ? ` _and ${dropped} more_` : ''),

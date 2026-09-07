@@ -859,12 +859,12 @@ export function describeSeed(seed) {
 // developed pitch, still a perfectly usable jam prompt.
 export function madlibsIdea(seed, number) {
   const lines = [
-    `**Untitled Masterpiece #${number}**`,
+    `**Untitled game #${number}**`,
     `${capitalise(seed.genre)} where you play as ${seed.protagonist}` +
       `${seed.setting ? `, set in ${seed.setting}` : ''}.`,
   ];
   if (seed.twist) lines.push(`**The hook:** ${seed.twist}.`);
-  if (seed.wildcard) lines.push('*The wildcard rule applies: nothing here is sacred, including the genre.*');
+  if (seed.wildcard) lines.push('*Wildcard rule: the genre may change.*');
   return lines.join('\n');
 }
 

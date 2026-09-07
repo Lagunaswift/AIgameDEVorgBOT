@@ -134,7 +134,7 @@ export async function execute(interaction) {
 
   const emojiSpec = parseEmojiSpec(emojiRaw);
   if (!emojiSpec) {
-    await interaction.editReply('That vote emoji looks empty — try `emoji:logocomp`.');
+    await interaction.editReply('That vote emoji looks empty. Try `emoji:logocomp`.');
     return;
   }
 
@@ -145,7 +145,7 @@ export async function execute(interaction) {
   if (poll.answers.length < 2) {
     await interaction.editReply(
       `Not enough entries with votes to shortlist (found ${poll.answers.length}). ` +
-        'Let people react with the vote emoji first, then run this again — or run ' +
+        'Let people react with the vote emoji, then run this again. You can also run ' +
         '`/logovotes` to see the current tally.',
     );
     return;
@@ -154,8 +154,8 @@ export async function execute(interaction) {
   // Compose the message: a numbered legend linking each option to its post, then the poll.
   const closing = hours === 1 ? '1 hour' : hours % 24 === 0 && hours >= 24 ? `${hours / 24} day${hours === 24 ? '' : 's'}` : `${hours} hours`;
   const content = [
-    '🏆 **Logo Competition — Final Vote**',
-    `The top ${poll.answers.length} by reactions are below. One vote each — the poll closes in **${closing}**.`,
+    '🏆 **Logo competition: final vote**',
+    `The top ${poll.answers.length} entries by reactions are below. One vote each. The poll closes in **${closing}**.`,
     '',
     ...poll.legend,
   ].join('\n');
@@ -185,7 +185,7 @@ export async function execute(interaction) {
   if (poll.droppedTie > 0) {
     notes.push(
       `⚠️ ${poll.droppedTie} entr${poll.droppedTie === 1 ? 'y was' : 'ies were'} tied with the last finalist ` +
-        `but left off — a poll can only hold ${POLL_MAX_ANSWERS} options. Raise the bar with more reactions, or split into rounds.`,
+        `but left off. A poll can only hold ${POLL_MAX_ANSWERS} options. Get more reactions or split the vote into rounds.`,
     );
   }
   notes.push(
