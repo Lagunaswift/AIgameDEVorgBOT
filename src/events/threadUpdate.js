@@ -1,7 +1,7 @@
 import { Events } from 'discord.js';
 import { hostedPlatformFlags } from '../lib/hostedFeatureFlags.js';
 import { reconcileThreadHostedBuild } from '../services/hostedBuildRuntime.js';
-import { syncThreadJamEligibility } from '../services/jams.js';
+import { syncJamPhaseFromEventThread, syncThreadJamEligibility } from '../services/jams.js';
 
 export const name = Events.ThreadUpdate;
 export const once = false;
@@ -23,9 +23,10 @@ export async function execute(oldThread, newThread) {
 
   if (flags.jamHostingEnabled) {
     try {
+      await syncJamPhaseFromEventThread(newThread);
       await syncThreadJamEligibility(newThread);
     } catch (error) {
-      console.error(`[hosted-platform] Jam eligibility sync failed for thread ${newThread.id}:`, error.message);
+      console.error(`[hosted-platform] Jam sync failed for thread ${newThread.id}:`, error.message);
     }
   }
 
