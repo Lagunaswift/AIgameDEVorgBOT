@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { FieldValue, Timestamp, getDb } from '../firebase.js';
 import { checkGameApproval } from '../lib/gameApproval.js';
-import { runtimeReconciliationDecision } from '../lib/hostedPlatform.js';
+import { runtimeReconciliationPlan } from '../lib/hostedPlatform.js';
 
 let controllerOverride = null;
 
@@ -63,71 +63,63 @@ export async function reconcileProjectHostedBuild({ projectId, rest, controller 
   if (thread?.projectId !== projectId || thread?.ownerId !== project.ownerId) return { status: 'ignored', reason: 'thread-project-mismatch' };
 
   const approval = await approvalForProject(rest, project, thread);
-  let requestedBuild = null;
-  if (typeof state.requestedBuildId === 'string') {
-    const buildSnap = await db.collection('projectBuilds').doc(state.requestedBuildId).get();
-    requestedBuild = buildSnap.exists ? buildSnap.data() : null;
-  }
-
-  const decision = runtimeReconciliationDecision({
+  const [buildsSnap, submissionsSnap, jamsSnap, eligibilitySnap] = await Promise.all([
+    db.collection('projectBuilds').where('projectId', '==', projectId).get(),
+    db.collection('jamSubmissions').where('projectId', '==', projectId).get(),
+    db.collection('jams').get(),
+    db.collection('jamEligibility').where('projectId', '==', projectId).get(),
+  ]);
+  const builds = buildsSnap.docs.map((doc) => ({ buildId: doc.id, ...doc.data() }));
+  const submissions = submissionsSnap.docs.map((doc) => doc.data());
+  const jams = jamsSnap.docs.map((doc) => ({ jamId: doc.id, ...doc.data() }));
+  const eligibilities = eligibilitySnap.docs.map((doc) => doc.data());
+  const plan = runtimeReconciliationPlan({
     project,
     buildState: state,
-    build: requestedBuild,
+    builds,
+    submissions,
+    jams,
+    eligibilities,
     approved: approval.approved === true,
   });
 
-  if (decision.action === 'none') {
-    await stateRef.set({
+  if (plan.enable.length === 0 && plan.disable.length === 0) {
+    const stateUpdate = {
       runtimeReconcileNeeded: false,
-      runtimeReconcileReason: decision.reason,
+      runtimeReconcileReason: approval.approved === true ? 'in-sync' : approval.reason,
       runtimeReconcileAttemptedAt: Timestamp.now(),
-    }, { merge: true });
-    return { status: 'ok', action: 'none', reason: decision.reason, approved: approval.approved === true };
+      publishedBuildId: plan.primaryPublishedBuildId ?? FieldValue.delete(),
+    };
+    await stateRef.set(stateUpdate, { merge: true });
+    return { status: 'ok', action: 'none', plan, approved: approval.approved === true };
   }
 
   if (!controllerReady(controller)) {
     await markReconcileNeeded(stateRef, 'provider-unavailable');
-    return { status: 'blocked', action: decision.action, reason: 'provider-unavailable' };
+    return { status: 'blocked', action: 'reconcile', reason: 'provider-unavailable', plan };
   }
 
-  if (decision.action === 'publish') {
-    await controller.enableBuild({ buildId: decision.buildId, projectId });
-    if (decision.previousBuildId && decision.previousBuildId !== decision.buildId) {
-      await controller.disableBuild({ buildId: decision.previousBuildId, projectId });
-    }
+  // Provider operations must be idempotent. Enable desired Builds before disabling stale
+  // ones so changing the primary Project Build does not create an avoidable outage.
+  for (const buildId of plan.enable) await controller.enableBuild({ buildId, projectId });
+  for (const buildId of plan.disable) await controller.disableBuild({ buildId, projectId });
 
-    const now = Timestamp.now();
-    const batch = db.batch();
-    batch.update(db.collection('projectBuilds').doc(decision.buildId), { runtimeState: 'public', updatedAt: now });
-    if (decision.previousBuildId && decision.previousBuildId !== decision.buildId) {
-      batch.update(db.collection('projectBuilds').doc(decision.previousBuildId), { runtimeState: 'revoked', updatedAt: now });
-    }
-    batch.set(stateRef, {
-      projectId,
-      requestedBuildId: decision.buildId,
-      publishedBuildId: decision.buildId,
-      runtimeReconcileNeeded: false,
-      runtimeReconcileReason: 'approved',
-      runtimeReconcileAttemptedAt: now,
-    }, { merge: true });
-    await batch.commit();
-    return { status: 'ok', action: 'publish', buildId: decision.buildId };
-  }
-
-  await controller.disableBuild({ buildId: decision.buildId, projectId });
   const now = Timestamp.now();
-  const buildRef = db.collection('projectBuilds').doc(decision.buildId);
-  const buildSnap = await buildRef.get();
   const batch = db.batch();
-  if (buildSnap.exists) batch.update(buildRef, { runtimeState: 'revoked', updatedAt: now });
+  for (const buildId of plan.enable) {
+    batch.update(db.collection('projectBuilds').doc(buildId), { runtimeState: 'public', updatedAt: now });
+  }
+  for (const buildId of plan.disable) {
+    batch.update(db.collection('projectBuilds').doc(buildId), { runtimeState: 'revoked', updatedAt: now });
+  }
   batch.set(stateRef, {
-    publishedBuildId: FieldValue.delete(),
+    publishedBuildId: plan.primaryPublishedBuildId ?? FieldValue.delete(),
     runtimeReconcileNeeded: false,
-    runtimeReconcileReason: decision.reason,
+    runtimeReconcileReason: 'in-sync',
     runtimeReconcileAttemptedAt: now,
   }, { merge: true });
   await batch.commit();
-  return { status: 'ok', action: 'revoke', buildId: decision.buildId, reason: decision.reason };
+  return { status: 'ok', action: 'reconcile', plan };
 }
 
 export async function reconcileThreadHostedBuild({ threadId, rest, controller = getHostedRuntimeController() }) {
