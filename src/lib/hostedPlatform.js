@@ -81,6 +81,70 @@ export function deriveJamEligibility({ jam, thread, project }) {
   };
 }
 
+function validOwnedReadyBuild(build, project) {
+  return build?.status === 'ready'
+    && isBuildId(build?.buildId)
+    && build?.projectId === project?.id
+    && build?.ownerId === project?.ownerId;
+}
+
+export function runtimeReconciliationPlan({
+  project,
+  buildState,
+  builds = [],
+  submissions = [],
+  jams = [],
+  eligibilities = [],
+  approved,
+}) {
+  const buildById = new Map(builds.filter((build) => isBuildId(build?.buildId)).map((build) => [build.buildId, build]));
+  const jamById = new Map(jams.filter((jam) => isSnowflake(jam?.jamId)).map((jam) => [jam.jamId, jam]));
+  const eligibilityByKey = new Map(eligibilities.map((value) => [`${value?.jamId}_${value?.projectId}`, value]));
+  const desired = new Set();
+
+  if (project?.publishToSite === true && approved === true) {
+    const requested = buildById.get(buildState?.requestedBuildId);
+    if (validOwnedReadyBuild(requested, project)) desired.add(requested.buildId);
+
+    for (const submission of submissions) {
+      if (submission?.projectId !== project.id || submission?.ownerId !== project.ownerId || !isBuildId(submission?.buildId)) continue;
+      const build = buildById.get(submission.buildId);
+      if (!validOwnedReadyBuild(build, project)) continue;
+      const jam = jamById.get(submission.jamId);
+      if (!jam) continue;
+
+      let publicJamReference = false;
+      if (submission.state === 'submitted' && jam.phase === 'active') {
+        const eligibility = eligibilityByKey.get(`${submission.jamId}_${project.id}`);
+        publicJamReference = eligibility?.eligible === true
+          && eligibility?.threadId === project.profileThreadId
+          && eligibility?.ownerId === project.ownerId;
+      } else if (submission.state === 'locked' && jam.phase === 'voting') {
+        publicJamReference = true;
+      } else if (submission.state === 'finished' && jam.phase === 'finished') {
+        publicJamReference = true;
+      }
+      if (publicJamReference) desired.add(build.buildId);
+    }
+  }
+
+  const actual = new Set(
+    builds
+      .filter((build) => build?.projectId === project?.id && build?.ownerId === project?.ownerId && build?.runtimeState === 'public' && isBuildId(build?.buildId))
+      .map((build) => build.buildId),
+  );
+  const enable = [...desired].filter((id) => !actual.has(id)).sort();
+  const disable = [...actual].filter((id) => !desired.has(id)).sort();
+  const primary = desired.has(buildState?.requestedBuildId) ? buildState.requestedBuildId : null;
+  return {
+    desired: [...desired].sort(),
+    actual: [...actual].sort(),
+    enable,
+    disable,
+    primaryPublishedBuildId: primary,
+  };
+}
+
 export function runtimeReconciliationDecision({ project, buildState, build, approved }) {
   const requestedBuildId = buildState?.requestedBuildId;
   const publishedBuildId = buildState?.publishedBuildId;
