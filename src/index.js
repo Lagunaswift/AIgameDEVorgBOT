@@ -7,6 +7,7 @@ import { loadCommands } from './loadCommands.js';
 import { registerGuildCommands } from './lib/registerCommands.js';
 import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js';
 import { scheduleDailyDigest, catchUpDailyDigest } from './services/dailyDigest.js';
+import { scheduleHostedBuildReports } from './services/hostedBuildReports.js';
 import { getEffectiveConfig } from './services/config.js';
 
 // Event modules, imported once and bound at startup.
@@ -65,7 +66,7 @@ async function main() {
     }
   }
 
-  // Schedule the weekly leaderboard post once we're ready (needs a live client).
+  // Schedule jobs once we're ready (needs a live client).
   client.once(Events.ClientReady, () => {
     // Sync slash commands to the guild on every boot (a full-replace PUT, idempotent and
     // near-instant for guild commands), so a deploy alone makes new commands appear — no
@@ -106,6 +107,8 @@ async function main() {
     } else {
       console.log('[startup] daily digest disabled via DAILY_DIGEST_ENABLED=false');
     }
+
+    scheduleHostedBuildReports(client);
   });
 
   // Surface gateway errors rather than dying silently.
