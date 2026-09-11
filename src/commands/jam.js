@@ -1,5 +1,6 @@
 import { ChannelType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { hostedPlatformFlags } from '../lib/hostedFeatureFlags.js';
+import { canTransitionJamPhase } from '../lib/hostedPlatform.js';
 import { isMod } from '../lib/permissions.js';
 import { getJam, jamStatus, registerJam, setJamPhase } from '../services/jams.js';
 
@@ -126,6 +127,10 @@ export async function execute(interaction) {
       await interaction.editReply('I could not resolve exactly one submission tag. Paste its exact name or numeric tag ID.');
       return;
     }
+    if (!lifecycleMap(eventsForum).get('upcoming')) {
+      await interaction.editReply('The events forum needs an exact `upcoming` lifecycle tag before this Jam can be registered.');
+      return;
+    }
     if (await getJam(eventThread.id)) {
       await interaction.editReply('This Jam thread is already registered. Use `/jam status` or `/jam phase`.');
       return;
@@ -161,17 +166,31 @@ export async function execute(interaction) {
 
   if (subcommand === 'phase') {
     const nextPhase = interaction.options.getString('phase', true);
+    if (jam.phase === nextPhase) {
+      await interaction.editReply(`**${jam.title}** is already **${nextPhase}**.`);
+      return;
+    }
+    if (!canTransitionJamPhase(jam.phase, nextPhase)) {
+      await interaction.editReply(`Phase change rejected: **${jam.phase}** cannot move to **${nextPhase}**.`);
+      return;
+    }
+
     const eventThread = await freshChannel(interaction.client, jam.discordThreadId);
     const eventsForum = eventThread?.parentId ? await freshChannel(interaction.client, eventThread.parentId) : null;
     if (!eventThread?.isThread?.() || !eventsForum) {
       await interaction.editReply('The registered Jam thread or its events forum is unavailable.');
       return;
     }
+    if (!lifecycleMap(eventsForum).get(nextPhase)) {
+      await interaction.editReply(`The events forum needs an exact \`${nextPhase}\` lifecycle tag before changing phase.`);
+      return;
+    }
+
     try {
       await applyLifecycleTag(eventThread, eventsForum, nextPhase);
       const result = await setJamPhase(jam.id, nextPhase);
       if (result.status === 'state') {
-        await interaction.editReply(`Phase change rejected: **${result.from}** cannot move to **${result.to}**.`);
+        await interaction.editReply(`Phase change raced with another update: **${result.from}** cannot move to **${result.to}**. Check \`/jam status\`.`);
         return;
       }
       if (result.status !== 'ok') {
