@@ -10,11 +10,17 @@ on:
       - 'src/lib/hostedFeatureFlags.js'
       - 'src/services/jams.js'
       - 'src/services/hostedBuildRuntime.js'
+      - 'src/services/hostedBuildModeration.js'
       - 'src/events/threadUpdate.js'
       - 'src/commands/jam.js'
+      - 'src/commands/build.js'
       - 'src/index.js'
-      - 'test/hosted-platform.test.mjs'
+      - 'scripts/hosted-platform-export-lib.mjs'
+      - 'scripts/export-hosted-platform.mjs'
+      - 'test/hosted-platform*.test.mjs'
+      - '.env.example'
       - '.github/workflows/hosted-platform.yml'
+      - '.github/workflows/export-site.yml'
 
 permissions:
   contents: read
