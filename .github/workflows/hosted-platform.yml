@@ -19,6 +19,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Existing exporter regression fixtures use this exact deterministic guild ID.
+  # It is test data, not a production credential.
+  GUILD_ID: '1051088980176805919'
+
 jobs:
   test:
     runs-on: ubuntu-latest
