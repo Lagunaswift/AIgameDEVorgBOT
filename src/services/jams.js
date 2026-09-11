@@ -1,5 +1,7 @@
-import { FieldValue, Timestamp, getDb } from '../firebase.js';
+import { Timestamp, getDb } from '../firebase.js';
 import { canLockJamSubmission, canTransitionJamPhase, deriveJamEligibility, makeJamRecord } from '../lib/hostedPlatform.js';
+
+const LIFECYCLE_PHASES = Object.freeze(['upcoming', 'active', 'voting', 'finished']);
 
 function jamRef(jamId) {
   return getDb().collection('jams').doc(jamId);
@@ -10,6 +12,16 @@ function phaseTimestampUpdate(nextPhase, now) {
   if (nextPhase === 'voting') return { votingStartedAt: now };
   if (nextPhase === 'finished') return { finishedAt: now };
   return {};
+}
+
+function lifecycleTagsForForum(forum) {
+  const tags = Array.isArray(forum?.availableTags) ? forum.availableTags : [];
+  const map = new Map();
+  for (const tag of tags) {
+    const name = String(tag?.name || '').trim().toLowerCase();
+    if (LIFECYCLE_PHASES.includes(name) && !map.has(name)) map.set(name, tag.id);
+  }
+  return map;
 }
 
 export async function registerJam(input) {
@@ -38,6 +50,7 @@ export async function setJamPhase(jamId, nextPhase) {
   ]);
   if (!jamSnap.exists) return { status: 'missing' };
   const jam = jamSnap.data();
+  if (jam.phase === nextPhase) return { status: 'ok', phase: nextPhase, locked: 0, finished: 0, unchanged: true };
   if (!canTransitionJamPhase(jam.phase, nextPhase)) return { status: 'state', from: jam.phase, to: nextPhase };
   if (submissionsSnap.size > 450) return { status: 'too-many-submissions' };
 
@@ -67,6 +80,23 @@ export async function setJamPhase(jamId, nextPhase) {
 
   await batch.commit();
   return { status: 'ok', phase: nextPhase, locked, finished };
+}
+
+export async function syncJamPhaseFromEventThread(thread) {
+  if (!thread?.id) return { status: 'ignored', reason: 'missing-thread-id' };
+  const jam = await getJam(thread.id);
+  if (!jam) return { status: 'ignored', reason: 'unregistered-jam' };
+  if (thread.parentId !== jam.eventsForumId) return { status: 'ignored', reason: 'wrong-events-forum' };
+
+  let forum = thread.parent ?? null;
+  if (!forum || !Array.isArray(forum.availableTags)) {
+    try { forum = await thread.client.channels.fetch(thread.parentId, { force: true }); } catch { forum = null; }
+  }
+  const lifecycle = lifecycleTagsForForum(forum);
+  const applied = Array.isArray(thread.appliedTags) ? thread.appliedTags : [];
+  const phases = LIFECYCLE_PHASES.filter((phase) => lifecycle.get(phase) && applied.includes(lifecycle.get(phase)));
+  if (phases.length !== 1) return { status: 'ignored', reason: phases.length ? 'multiple-lifecycle-tags' : 'lifecycle-tag-missing' };
+  return setJamPhase(thread.id, phases[0]);
 }
 
 async function markExistingEligibilityUnavailable(threadId, reason) {
