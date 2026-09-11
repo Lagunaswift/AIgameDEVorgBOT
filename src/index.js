@@ -12,6 +12,7 @@ import { getEffectiveConfig } from './services/config.js';
 // Event modules, imported once and bound at startup.
 import * as ready from './events/ready.js';
 import * as threadCreate from './events/threadCreate.js';
+import * as threadUpdate from './events/threadUpdate.js';
 import * as messageReactionAdd from './events/messageReactionAdd.js';
 import * as messageReactionRemove from './events/messageReactionRemove.js';
 import * as interactionCreate from './events/interactionCreate.js';
@@ -20,6 +21,7 @@ import * as messageCreate from './events/messageCreate.js';
 const EVENT_MODULES = [
   ready,
   threadCreate,
+  threadUpdate,
   messageReactionAdd,
   messageReactionRemove,
   interactionCreate,
