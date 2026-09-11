@@ -13,17 +13,45 @@ export async function inspectHostedBuild(buildId) {
   const buildSnap = await buildRef.get();
   if (!buildSnap.exists) return null;
   const build = { buildId: buildSnap.id, ...buildSnap.data() };
-  const [projectSnap, stateSnap, submissionsSnap] = await Promise.all([
+  const [projectSnap, stateSnap, submissionsSnap, reportsSnap] = await Promise.all([
     db.collection('projects').doc(build.projectId).get(),
     db.collection('projectBuildState').doc(build.projectId).get(),
     db.collection('jamSubmissions').where('buildId', '==', buildId).get(),
+    db.collection('buildReports').where('buildId', '==', buildId).get(),
   ]);
   return {
     build,
     project: projectSnap.exists ? { id: projectSnap.id, ...projectSnap.data() } : null,
     buildState: stateSnap.exists ? stateSnap.data() : null,
     jamSubmissions: submissionsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    reports: reportsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
   };
+}
+
+export async function listOpenHostedBuildReports(buildId) {
+  const current = await inspectHostedBuild(buildId);
+  if (!current) return null;
+  return current.reports.filter((report) => report.status === 'open');
+}
+
+export async function resolveHostedBuildReport({ reportId, moderatorId, resolution }) {
+  const db = getDb();
+  const ref = db.collection('buildReports').doc(reportId);
+  return db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists) return { status: 'missing' };
+    const report = snap.data();
+    if (report?.status !== 'open') return { status: 'state', reportStatus: report?.status ?? 'unknown' };
+    const text = String(resolution || '').trim();
+    if (!text || text.length > 1000) return { status: 'resolution' };
+    transaction.update(ref, {
+      status: 'resolved',
+      resolution: text,
+      resolvedBy: moderatorId,
+      resolvedAt: Timestamp.now(),
+    });
+    return { status: 'ok', buildId: report.buildId };
+  });
 }
 
 export async function disableHostedBuild({ buildId, moderatorId, reason, controller = getHostedRuntimeController() }) {
