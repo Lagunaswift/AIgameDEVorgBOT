@@ -1,0 +1,33 @@
+name: Hosted Builds Jam Bot Core
+
+on:
+  push:
+    branches:
+      - feat/hosted-builds-jam-runtime
+  pull_request:
+    paths:
+      - 'src/lib/hostedPlatform.js'
+      - 'src/lib/hostedFeatureFlags.js'
+      - 'src/services/jams.js'
+      - 'src/services/hostedBuildRuntime.js'
+      - 'src/events/threadUpdate.js'
+      - 'src/commands/jam.js'
+      - 'src/index.js'
+      - 'test/hosted-platform.test.mjs'
+      - '.github/workflows/hosted-platform.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
