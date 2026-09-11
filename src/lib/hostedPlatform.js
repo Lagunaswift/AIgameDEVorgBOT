@@ -101,14 +101,10 @@ export function runtimeReconciliationDecision({ project, buildState, build, appr
       : { action: 'none', reason: 'requested-build-invalid' };
   }
   if (build.status !== 'ready') {
+    const reason = build.status === 'disabled' ? 'build-disabled' : 'requested-build-not-ready';
     return publishedBuildId
-      ? { action: 'revoke', buildId: publishedBuildId, reason: 'requested-build-not-ready' }
-      : { action: 'none', reason: 'requested-build-not-ready' };
-  }
-  if (build.runtimeState === 'disabled') {
-    return publishedBuildId
-      ? { action: 'revoke', buildId: publishedBuildId, reason: 'build-disabled' }
-      : { action: 'none', reason: 'build-disabled' };
+      ? { action: 'revoke', buildId: publishedBuildId, reason }
+      : { action: 'none', reason };
   }
   if (publishedBuildId === requestedBuildId && build.runtimeState === 'public') {
     return { action: 'none', reason: 'already-public' };
