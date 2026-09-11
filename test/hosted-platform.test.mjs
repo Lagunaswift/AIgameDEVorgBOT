@@ -6,6 +6,7 @@ import {
   deriveJamEligibility,
   makeJamRecord,
   runtimeReconciliationDecision,
+  runtimeReconciliationPlan,
 } from '../src/lib/hostedPlatform.js';
 
 const ids = {
@@ -60,6 +61,52 @@ test('runtime reconciliation distinguishes owner intent, moderator approval and 
   assert.equal(runtimeReconciliationDecision({ project, buildState: { ...state, publishedBuildId: build.buildId }, build: { ...build, runtimeState: 'public' }, approved: false }).action, 'revoke');
   assert.equal(runtimeReconciliationDecision({ project: { ...project, publishToSite: false }, buildState: { ...state, publishedBuildId: build.buildId }, build, approved: true }).reason, 'owner-publication-disabled');
   assert.equal(runtimeReconciliationDecision({ project, buildState: state, build: { ...build, status: 'failed' }, approved: true }).reason, 'requested-build-not-ready');
+});
+
+test('runtime plan keeps a locked Jam Build public after the Project moves to a newer Build', () => {
+  const jamBuild = { buildId: 'build_JamBuild123', projectId: project.id, ownerId: ids.owner, status: 'ready', runtimeState: 'public' };
+  const currentBuild = { buildId: 'build_Current123', projectId: project.id, ownerId: ids.owner, status: 'ready', runtimeState: 'requested' };
+  const plan = runtimeReconciliationPlan({
+    project,
+    buildState: { requestedBuildId: currentBuild.buildId, publishedBuildId: jamBuild.buildId },
+    builds: [jamBuild, currentBuild],
+    submissions: [{ jamId: ids.jam, projectId: project.id, ownerId: ids.owner, buildId: jamBuild.buildId, state: 'locked' }],
+    jams: [{ ...jam, phase: 'voting' }],
+    eligibilities: [],
+    approved: true,
+  });
+  assert.deepEqual(plan.desired, [currentBuild.buildId, jamBuild.buildId].sort());
+  assert.deepEqual(plan.enable, [currentBuild.buildId]);
+  assert.deepEqual(plan.disable, []);
+  assert.equal(plan.primaryPublishedBuildId, currentBuild.buildId);
+});
+
+test('active Jam Build requires current mirrored eligibility but locked/finished Build does not', () => {
+  const build = { buildId: 'build_AbCdEf1234', projectId: project.id, ownerId: ids.owner, status: 'ready', runtimeState: 'private' };
+  const submission = { jamId: ids.jam, projectId: project.id, ownerId: ids.owner, buildId: build.buildId, state: 'submitted' };
+  let plan = runtimeReconciliationPlan({ project, buildState: {}, builds: [build], submissions: [submission], jams: [jam], eligibilities: [], approved: true });
+  assert.deepEqual(plan.desired, []);
+  plan = runtimeReconciliationPlan({
+    project,
+    buildState: {},
+    builds: [build],
+    submissions: [submission],
+    jams: [jam],
+    eligibilities: [{ jamId: ids.jam, projectId: project.id, threadId: ids.thread, ownerId: ids.owner, eligible: true }],
+    approved: true,
+  });
+  assert.deepEqual(plan.desired, [build.buildId]);
+});
+
+test('removing moderator approval revokes every public Build for the Project', () => {
+  const builds = [
+    { buildId: 'build_AbCdEf1234', projectId: project.id, ownerId: ids.owner, status: 'ready', runtimeState: 'public' },
+    { buildId: 'build_OtherJam123', projectId: project.id, ownerId: ids.owner, status: 'ready', runtimeState: 'public' },
+  ];
+  const plan = runtimeReconciliationPlan({ project, buildState: { requestedBuildId: builds[0].buildId }, builds, approved: false });
+  assert.deepEqual(plan.desired, []);
+  assert.deepEqual(plan.disable, builds.map((build) => build.buildId).sort());
+  assert.equal(plan.primaryPublishedBuildId, null);
 });
 
 test('Jam submission can lock only one exact submitted Build during voting', () => {
