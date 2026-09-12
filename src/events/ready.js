@@ -4,6 +4,7 @@
 import { Events } from 'discord.js';
 import { getEffectiveConfig } from '../services/config.js';
 import { reconcileAllActiveJamEligibility } from '../services/jamEligibility.js';
+import { startBuildReportNotifier } from '../services/buildReports.js';
 
 export const name = Events.ClientReady;
 export const once = true;
@@ -27,6 +28,8 @@ export async function execute(client) {
   } catch (err) {
     console.error('[ready] could not load config:', err.message);
   }
+
+  startBuildReportNotifier(client);
 
   let running = false;
   const reconcile = async () => {
