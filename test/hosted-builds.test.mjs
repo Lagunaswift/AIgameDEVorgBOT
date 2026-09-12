@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  jamEligibilityDecision,
   jamSubmissionDocId,
   phaseTransitionAllowed,
   qualificationDecision,
@@ -34,6 +35,18 @@ test('jam qualification requires exact project/build, approval and ready state',
   assert.deepEqual(qualificationDecision({ project, build, submission, moderatorApproved: true, jamPhase: 'voting' }), { qualified: true, reason: 'qualified' });
   assert.equal(qualificationDecision({ project, build, submission, moderatorApproved: false, jamPhase: 'voting' }).qualified, false);
   assert.equal(qualificationDecision({ project, build: { ...build, id: 'other' }, submission, moderatorApproved: true, jamPhase: 'voting' }).qualified, false);
+});
+
+test('Jam eligibility requires the exact registered thread, exact submission and exact Jam tag', () => {
+  const thread = { threadId: '1539971669467332999', projectId: 'project_1', ownerId: '123456789012345678', mode: 'showcase' };
+  const channel = { id: thread.threadId, appliedTags: ['1539971669467332728'] };
+  const jam = { submissionTagId: '1539971669467332728' };
+  const submission = { state: 'submitted', projectId: 'project_1', ownerId: thread.ownerId, threadId: thread.threadId, buildId: 'build_12345678' };
+
+  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission }), { eligible: true, reason: 'eligible' });
+  assert.deepEqual(jamEligibilityDecision({ thread, channel: { ...channel, appliedTags: [] }, jam, submission }), { eligible: false, reason: 'jam-tag-missing' });
+  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission: { ...submission, buildId: 'build_other', threadId: '1539971669467332000' } }), { eligible: false, reason: 'submission-mismatch' });
+  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission: null }), { eligible: false, reason: 'no-submission' });
 });
 
 test('jam phase and submission state transitions are forward-only', () => {
