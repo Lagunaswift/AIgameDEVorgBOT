@@ -2,7 +2,7 @@ import { Events } from 'discord.js';
 import { config } from '../config.js';
 import { reconcileHostedBuildsForThread } from '../services/hostedBuilds.js';
 import { reconcileAllActiveJamEligibility, reconcileJamEligibilityForThread } from '../services/jamEligibility.js';
-import { lockQualifiedJamSubmissions, reconcileJamPhaseFromThread } from '../services/jams.js';
+import { finishLockedJamSubmissions, lockQualifiedJamSubmissions, reconcileJamPhaseFromThread } from '../services/jams.js';
 
 export const name = Events.ThreadUpdate;
 export const once = false;
@@ -44,6 +44,10 @@ export async function execute(oldThread, newThread) {
         const locked = results.filter((item) => item.status === 'locked').length;
         const blocked = results.filter((item) => item.status === 'blocked').length;
         console.log(`[threadUpdate] jam voting lock thread=${newThread.id} locked=${locked} blocked=${blocked}`);
+      }
+      if (phase.status === 'updated' && phase.phase === 'finished') {
+        const finalized = await finishLockedJamSubmissions(newThread.id);
+        console.log(`[threadUpdate] jam archive finalize thread=${newThread.id} finalized=${finalized}`);
       }
 
       const eligibility = await reconcileJamEligibilityForThread({ channel: newThread });
