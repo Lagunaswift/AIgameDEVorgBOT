@@ -114,6 +114,74 @@ export async function reconcileJamPhaseFromThread(thread, { db = getDb() } = {})
   return { status: 'updated', phase: updated.phase };
 }
 
+function exactEligibility(eligibility, jam, submission) {
+  return Boolean(eligibility)
+    && eligibility.eligible === true
+    && eligibility.jamId === jam.id
+    && eligibility.projectId === submission.projectId
+    && eligibility.buildId === submission.buildId
+    && eligibility.threadId === submission.threadId
+    && eligibility.ownerId === submission.ownerId;
+}
+
+async function submissionEvidence(db, jam, submission) {
+  const key = `${jam.id}_${submission.projectId}`;
+  const [projectSnap, buildSnap, buildStateSnap, eligibilitySnap] = await Promise.all([
+    db.collection('projects').doc(submission.projectId).get(),
+    db.collection('projectBuilds').doc(submission.buildId).get(),
+    db.collection('projectBuildState').doc(submission.projectId).get(),
+    db.collection('jamEligibility').doc(key).get(),
+  ]);
+  return {
+    project: projectSnap.exists ? { id: projectSnap.id, ...projectSnap.data() } : null,
+    build: buildSnap.exists ? { id: buildSnap.id, ...buildSnap.data() } : null,
+    buildState: buildStateSnap.exists ? buildStateSnap.data() : {},
+    eligibility: eligibilitySnap.exists ? eligibilitySnap.data() : null,
+  };
+}
+
+export function jamReviewDecision({ jam, submission, project, build, buildState, eligibility }) {
+  if (submission.state === 'locked') return { status: 'locked', reasons: [] };
+  if (submission.state !== 'submitted') return { status: 'excluded', reasons: [`submission-${submission.state || 'unknown'}`] };
+
+  const reasons = [];
+  if (!exactEligibility(eligibility, jam, submission)) reasons.push(eligibility?.reason || 'jam-eligibility-missing');
+  if (!project) reasons.push('project-missing');
+  else if (project.publishToSite !== true) reasons.push('owner-publication-off');
+  if (buildState?.moderationApproved !== true) reasons.push('moderator-approval-missing');
+  if (!build) reasons.push('build-missing');
+  else if (build.status !== 'ready') reasons.push(`build-${build.status || 'unknown'}`);
+  else if (build.runtimeState === 'revoked') reasons.push('build-revoked');
+
+  return reasons.length
+    ? { status: 'blocked', reasons: [...new Set(reasons)] }
+    : { status: 'ready', reasons: [] };
+}
+
+export async function jamReviewQueue(jamId, { db = getDb() } = {}) {
+  const jam = await getJam(jamId, { db });
+  if (!jam) throw new Error('Jam is not registered');
+  const snapshot = await db.collection('jamSubmissions').where('jamId', '==', jam.id).get();
+  const entries = [];
+  for (const doc of snapshot.docs) {
+    const submission = { id: doc.id, ...doc.data() };
+    const evidence = await submissionEvidence(db, jam, submission);
+    const decision = jamReviewDecision({ jam, submission, ...evidence });
+    entries.push({
+      submissionId: doc.id,
+      projectId: submission.projectId,
+      buildId: submission.buildId,
+      threadId: submission.threadId,
+      state: submission.state,
+      ...decision,
+    });
+  }
+  const counts = { total: entries.length, ready: 0, blocked: 0, locked: 0, excluded: 0 };
+  for (const entry of entries) counts[entry.status] += 1;
+  entries.sort((a, b) => a.status.localeCompare(b.status) || String(a.projectId).localeCompare(String(b.projectId)));
+  return { jam, counts, entries };
+}
+
 export async function lockQualifiedJamSubmissions(jamId, { db = getDb(), timestamp = serverTimestamp() } = {}) {
   const jam = await getJam(jamId, { db });
   if (!jam) throw new Error('Jam is not registered');
@@ -127,19 +195,16 @@ export async function lockQualifiedJamSubmissions(jamId, { db = getDb(), timesta
       results.push({ submissionId: doc.id, status: 'skipped', reason: 'submission-state' });
       continue;
     }
-    const [projectSnap, buildSnap, buildStateSnap] = await Promise.all([
-      db.collection('projects').doc(submission.projectId).get(),
-      db.collection('projectBuilds').doc(submission.buildId).get(),
-      db.collection('projectBuildState').doc(submission.projectId).get(),
-    ]);
-    const project = projectSnap.exists ? { id: projectSnap.id, ...projectSnap.data() } : null;
-    const build = buildSnap.exists ? { id: buildSnap.id, ...buildSnap.data() } : null;
-    const buildState = buildStateSnap.exists ? buildStateSnap.data() : {};
+    const evidence = await submissionEvidence(db, jam, submission);
+    if (!exactEligibility(evidence.eligibility, jam, submission)) {
+      results.push({ submissionId: doc.id, status: 'blocked', reason: evidence.eligibility?.reason || 'jam-eligibility' });
+      continue;
+    }
     const decision = qualificationDecision({
-      project,
-      build,
+      project: evidence.project,
+      build: evidence.build,
       submission,
-      moderatorApproved: buildState.moderationApproved === true,
+      moderatorApproved: evidence.buildState.moderationApproved === true,
       jamPhase: jam.phase,
     });
     if (!decision.qualified) {
