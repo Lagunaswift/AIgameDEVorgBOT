@@ -39,11 +39,13 @@ jobs:
       - name: Capture production audit before fixes
         run: npm audit --omit=dev --json > audit-before.json || true
 
-      - name: Apply compatible audit fixes only
-        run: npm audit fix
+      - name: Apply compatible transitive fixes
+        run: npm audit fix || true
 
-      - name: Restore complete dependency tree
-        run: npm install --ignore-scripts=false
+      - name: Upgrade vulnerable direct dependencies deliberately
+        run: |
+          npm install --save firebase-admin@14.4.0 node-cron@4.6.0
+          npm pkg set engines.node='>=22.0.0'
 
       - name: Require clean production audit
         run: npm audit --omit=dev
@@ -72,11 +74,11 @@ jobs:
             exit 1
           fi
 
-      - name: Commit compatible dependency fixes
+      - name: Commit verified dependency fixes
         shell: bash
         run: |
           if git diff --quiet -- package.json package-lock.json; then
-            echo "No compatible package changes were required."
+            echo "No package changes were required."
             exit 0
           fi
           git config user.name "Lagunaswift"
