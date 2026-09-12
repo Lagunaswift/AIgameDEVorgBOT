@@ -8,7 +8,7 @@ const FORUM = '456789012345678901';
 const GUILD = '567890123456789012';
 const TAG = '678901234567890123';
 
-function interaction({ status = null } = {}) {
+function interaction({ status = null, subcommand = 'publish' } = {}) {
   const deferred = [];
   const edits = [];
   return {
@@ -20,7 +20,7 @@ function interaction({ status = null } = {}) {
     client: { rest: {} },
     user: { id: OWNER, username: 'Maker', globalName: 'Maker Display' },
     member: { displayName: 'Maker Display' },
-    options: { getSubcommand: () => 'publish', getString: () => status },
+    options: { getSubcommand: () => subcommand, getString: () => status },
     deferReply: async (value) => deferred.push(value),
     editReply: async (value) => edits.push(value),
     deferred,
@@ -37,15 +37,16 @@ function services(overrides = {}) {
     getThread: async () => thread(),
     checkGameApproval: async () => ({ approved: true }),
     config: { guildId: GUILD, sitePublishTagId: TAG },
+    siteOrigin: 'https://www.aigamedevs.org',
     setProjectPublication: async () => {},
     createAndPublishProjectForThread: async ({ input }) => ({ project: { title: input.title } }),
     ...overrides,
   };
 }
 
-test('/mygame registry exposes only publish', () => {
+test('/mygame registry exposes publish and manage only', () => {
   const json = createMyGameCommand().data.toJSON();
-  assert.deepEqual(json.options.map((option) => option.name), ['publish']);
+  assert.deepEqual(json.options.map((option) => option.name), ['publish', 'manage']);
 });
 
 test('a stale link interaction cannot turn into a publish request', async () => {
@@ -56,6 +57,21 @@ test('a stale link interaction cannot turn into a publish request', async () => 
     setProjectPublication: () => assert.fail('retired command cannot publish'),
   })).execute(request);
   assert.match(request.edits.at(-1), /no longer supported/);
+});
+
+test('/mygame manage returns only the linked owner Project management URL and does not require publication approval', async () => {
+  let approvalChecks = 0;
+  const request = interaction({ subcommand: 'manage' });
+  await createMyGameCommand(services({
+    getThread: async () => thread({ projectId: 'project-1' }),
+    checkGameApproval: async () => { approvalChecks += 1; return { approved: false }; },
+  })).execute(request);
+  assert.equal(approvalChecks, 0);
+  assert.equal(request.edits.at(-1), 'Manage your Project on AIGAMEDEV:\nhttps://www.aigamedevs.org/manage/projects/project-1/');
+
+  const noProject = interaction({ subcommand: 'manage' });
+  await createMyGameCommand(services()).execute(noProject);
+  assert.match(noProject.edits.at(-1), /does not have a Project yet/);
 });
 
 test('/mygame denies missing approval metadata, tag states, wrong owner, and wrong guild without writes', async () => {
