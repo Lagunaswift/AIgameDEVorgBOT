@@ -124,6 +124,12 @@ function exactEligibility(eligibility, jam, submission) {
     && eligibility.ownerId === submission.ownerId;
 }
 
+function eligibilityBlockReason(eligibility, jam, submission) {
+  if (exactEligibility(eligibility, jam, submission)) return null;
+  if (eligibility?.eligible === true) return 'jam-eligibility-mismatch';
+  return eligibility?.reason || 'jam-eligibility-missing';
+}
+
 async function submissionEvidence(db, jam, submission) {
   const key = `${jam.id}_${submission.projectId}`;
   const [projectSnap, buildSnap, buildStateSnap, eligibilitySnap] = await Promise.all([
@@ -145,7 +151,8 @@ export function jamReviewDecision({ jam, submission, project, build, buildState,
   if (submission.state !== 'submitted') return { status: 'excluded', reasons: [`submission-${submission.state || 'unknown'}`] };
 
   const reasons = [];
-  if (!exactEligibility(eligibility, jam, submission)) reasons.push(eligibility?.reason || 'jam-eligibility-missing');
+  const eligibilityReason = eligibilityBlockReason(eligibility, jam, submission);
+  if (eligibilityReason) reasons.push(eligibilityReason);
   if (!project) reasons.push('project-missing');
   else if (project.publishToSite !== true) reasons.push('owner-publication-off');
   if (buildState?.moderationApproved !== true) reasons.push('moderator-approval-missing');
@@ -196,8 +203,9 @@ export async function lockQualifiedJamSubmissions(jamId, { db = getDb(), timesta
       continue;
     }
     const evidence = await submissionEvidence(db, jam, submission);
-    if (!exactEligibility(evidence.eligibility, jam, submission)) {
-      results.push({ submissionId: doc.id, status: 'blocked', reason: evidence.eligibility?.reason || 'jam-eligibility' });
+    const eligibilityReason = eligibilityBlockReason(evidence.eligibility, jam, submission);
+    if (eligibilityReason) {
+      results.push({ submissionId: doc.id, status: 'blocked', reason: eligibilityReason });
       continue;
     }
     const decision = qualificationDecision({
