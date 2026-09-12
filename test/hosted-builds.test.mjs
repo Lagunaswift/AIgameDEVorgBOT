@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  discordJamPhaseDecision,
+  jamEligibilityDecision,
+  jamSubmissionDocId,
+  phaseTransitionAllowed,
+  qualificationDecision,
+  runtimeDecision,
+  submissionTransitionAllowed,
+} from '../src/lib/hostedBuilds.js';
+
+test('runtime decision publishes only approved ready requested builds', () => {
+  const project = { publishToSite: true };
+  const build = { status: 'ready', runtimeState: 'requested' };
+  assert.deepEqual(runtimeDecision({ project, build, moderatorApproved: true }), { action: 'publish', reason: 'approved' });
+  assert.deepEqual(runtimeDecision({ project, build: { ...build, status: 'validating' }, moderatorApproved: true }), { action: 'none', reason: 'build-not-ready' });
+});
+
+test('runtime decision revokes when moderator approval is removed', () => {
+  const project = { publishToSite: true };
+  const build = { status: 'ready', runtimeState: 'public' };
+  assert.deepEqual(runtimeDecision({ project, build, moderatorApproved: false }), { action: 'revoke', reason: 'moderator-withheld' });
+});
+
+test('owner publication intent is still required after moderator approval', () => {
+  const project = { publishToSite: false };
+  const build = { status: 'ready', runtimeState: 'public' };
+  assert.deepEqual(runtimeDecision({ project, build, moderatorApproved: true }), { action: 'revoke', reason: 'owner-private' });
+});
+
+test('jam qualification requires exact project/build, approval and ready state', () => {
+  const project = { id: 'project_1', publishToSite: true };
+  const build = { id: 'build_12345678', status: 'ready', runtimeState: 'public' };
+  const submission = { projectId: 'project_1', buildId: 'build_12345678', state: 'submitted' };
+  assert.deepEqual(qualificationDecision({ project, build, submission, moderatorApproved: true, jamPhase: 'voting' }), { qualified: true, reason: 'qualified' });
+  assert.equal(qualificationDecision({ project, build, submission, moderatorApproved: false, jamPhase: 'voting' }).qualified, false);
+  assert.equal(qualificationDecision({ project, build: { ...build, id: 'other' }, submission, moderatorApproved: true, jamPhase: 'voting' }).qualified, false);
+});
+
+test('Jam eligibility requires the exact registered thread, exact submission and exact Jam tag', () => {
+  const thread = { threadId: '1539971669467332999', projectId: 'project_1', ownerId: '123456789012345678', mode: 'showcase' };
+  const channel = { id: thread.threadId, appliedTags: ['1539971669467332728'] };
+  const jam = { submissionTagId: '1539971669467332728' };
+  const submission = { state: 'submitted', projectId: 'project_1', ownerId: thread.ownerId, threadId: thread.threadId, buildId: 'build_12345678' };
+
+  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission }), { eligible: true, reason: 'eligible' });
+  assert.deepEqual(jamEligibilityDecision({ thread, channel: { ...channel, appliedTags: [] }, jam, submission }), { eligible: false, reason: 'jam-tag-missing' });
+  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission: { ...submission, threadId: '1539971669467332000' } }), { eligible: false, reason: 'submission-mismatch' });
+  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission: null }), { eligible: false, reason: 'no-submission' });
+});
+
+test('Discord lifecycle tags map to one exact Jam phase and reject ambiguous state', () => {
+  const config = {
+    activeTagId: '1111111111111111111',
+    votingTagId: '2222222222222222222',
+    finishedTagId: '3333333333333333333',
+  };
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [], ...config }), { phase: 'upcoming', reason: 'no-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.activeTagId], ...config }), { phase: 'active', reason: 'exact-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.votingTagId], ...config }), { phase: 'voting', reason: 'exact-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.finishedTagId], ...config }), { phase: 'finished', reason: 'exact-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.activeTagId, config.votingTagId], ...config }), { phase: null, reason: 'multiple-lifecycle-tags' });
+});
+
+test('jam phase and submission state transitions are forward-only', () => {
+  assert.equal(phaseTransitionAllowed('upcoming', 'active'), true);
+  assert.equal(phaseTransitionAllowed('active', 'upcoming'), false);
+  assert.equal(phaseTransitionAllowed('active', 'voting'), true);
+  assert.equal(phaseTransitionAllowed('finished', 'active'), false);
+
+  assert.equal(submissionTransitionAllowed('submitted', 'locked'), true);
+  assert.equal(submissionTransitionAllowed('locked', 'submitted'), false);
+  assert.equal(submissionTransitionAllowed('locked', 'finished'), true);
+});
+
+test('jam submission IDs are deterministic and reject fuzzy identifiers', () => {
+  assert.equal(jamSubmissionDocId('1539971669467332728', 'project_1'), '1539971669467332728_project_1');
+  assert.throws(() => jamSubmissionDocId('One Verb Jam', 'project_1'), /Invalid jamId/);
+  assert.throws(() => jamSubmissionDocId('1539971669467332728', '../project'), /Invalid projectId/);
+});

@@ -1,23 +1,21 @@
-# Scheduled site refresh: pulls Showcase games, Projects, screenshots, org stats, and
-# jam events from Discord/Firestore into a staging clone of AIGAMEDEVSITE, validates
-# and builds it, then promotes only generated data/assets into the checked-out site repo.
-# Vercel then deploys the site automatically. Also runnable on demand from the
-# Actions tab ("Run workflow").
+# Scheduled site refresh: pulls Showcase games, Projects, screenshots, org stats, jams,
+# and approved hosted-build relationships from Discord/Firestore into a staging clone
+# of AIGAMEDEVSITE, validates and builds it, then promotes only generated data/assets.
+# Vercel then deploys the site automatically. Also runnable on demand from Actions.
 #
-# Required repository secrets (Settings -> Secrets and variables -> Actions):
-#   DISCORD_TOKEN            - the bot token (read access is enough)
-#   FIREBASE_SERVICE_ACCOUNT - the service account JSON, single line
-#   GUILD_ID                 - the Discord server id
-#   SITE_PUSH_TOKEN          - fine-grained PAT with Contents read/write on
-#                              Lagunaswift/AIGAMEDEVSITE
-# Required repository variable (Settings -> Secrets and variables -> Actions -> Variables):
-#   SITE_PUBLISH_TAG_ID      - Discord forum tag ID required for public Showcase export
+# Required repository secrets:
+#   DISCORD_TOKEN
+#   FIREBASE_SERVICE_ACCOUNT
+#   GUILD_ID
+#   SITE_PUSH_TOKEN
+# Required repository variable:
+#   SITE_PUBLISH_TAG_ID
 
 name: Export site data
 
 on:
   schedule:
-    - cron: '17 */6 * * *' # every 6 hours
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -54,13 +52,18 @@ jobs:
       - name: Create staging asset directories
         run: mkdir -p site-staging/public/assets/showcase site-staging/public/assets/awards site-staging/public/assets/projects
 
-      - name: Run export into staging
+      - name: Run core export into staging
         env:
           DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GUILD_ID: ${{ secrets.GUILD_ID }}
           SITE_PUBLISH_TAG_ID: ${{ vars.SITE_PUBLISH_TAG_ID }}
         run: node scripts/export-site-data.mjs --jams-forum 1539971669467332728 --out site-staging --report site-staging/export-report.json
+
+      - name: Run Hosted Builds export into staging
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node scripts/export-hosted-builds.mjs --out site-staging
 
       - name: Validate staged export
         run: node scripts/validate-site-export.mjs --candidate site-staging --previous site --report site-staging/export-report.json
@@ -76,10 +79,9 @@ jobs:
           cp site-staging/src/data/projects.json site/src/data/projects.json
           cp site-staging/src/data/showcase.json site/src/data/showcase.json
           cp site-staging/src/data/jams.json site/src/data/jams.json
+          cp site-staging/src/data/builds.json site/src/data/builds.json
           rsync -a --delete site-staging/public/assets/showcase/ site/public/assets/showcase/
           rsync -a --delete site-staging/public/assets/awards/ site/public/assets/awards/
-          # Only the reserved exporter namespace participates in deletion. Manually
-          # curated sibling assets under each Project slug are excluded and protected.
           rsync -a --delete --prune-empty-dirs \
             --include='*/' \
             --include='*/_discord-export/***' \
@@ -89,11 +91,9 @@ jobs:
       - name: Commit and push site data
         working-directory: site
         run: |
-          # Author as the repo owner so Vercel (which requires commit authors to
-          # have a linked account) deploys the automated data commits.
           git config user.name "Lagunaswift"
           git config user.email "jamesswift1988@gmail.com"
-          git add src/data/projects.json src/data/showcase.json src/data/jams.json public/assets/projects public/assets/showcase public/assets/awards
+          git add src/data/projects.json src/data/showcase.json src/data/jams.json src/data/builds.json public/assets/projects public/assets/showcase public/assets/awards
           if git diff --cached --quiet; then
             echo "No data changes this run."
           else
