@@ -47,6 +47,9 @@ jobs:
           npm install --save firebase-admin@14.4.0 node-cron@4.6.0
           npm pkg set engines.node='>=22.0.0'
 
+      - name: Apply final compatible lockfile cleanup
+        run: npm audit fix
+
       - name: Require clean production audit
         run: npm audit --omit=dev
 
