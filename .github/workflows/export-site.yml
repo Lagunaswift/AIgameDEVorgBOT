@@ -17,6 +17,12 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/project-publishing-export.mjs
+      - src/lib/project-publishing/**
+      - .github/workflows/export-site.yml
 
 concurrency:
   group: export-site
