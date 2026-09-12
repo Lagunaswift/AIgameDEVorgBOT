@@ -92,7 +92,7 @@ export async function setJamPhaseFromDiscord(thread, nextPhase, { db = getDb() }
   return setJamPhase(thread.id, nextPhase, { db });
 }
 
-export async function reconcileJamPhaseFromThread(thread, { db = getDb() } = {}) {
+export async function reconcileJamPhaseFromThread(thread, { db = getDb(), beforeVoting = null } = {}) {
   if (!thread?.id) return { status: 'invalid-thread' };
   const [jam, discordConfig] = await Promise.all([
     getJam(thread.id, { db }),
@@ -109,6 +109,9 @@ export async function reconcileJamPhaseFromThread(thread, { db = getDb() } = {})
   if (decision.phase === jam.phase) return { status: 'unchanged', phase: jam.phase };
   if (!phaseTransitionAllowed(jam.phase, decision.phase)) {
     return { status: 'blocked-transition', from: jam.phase, to: decision.phase, reason: decision.reason };
+  }
+  if (decision.phase === 'voting' && typeof beforeVoting === 'function') {
+    await beforeVoting();
   }
   const updated = await setJamPhase(jam.id, decision.phase, { db });
   return { status: 'updated', phase: updated.phase };
