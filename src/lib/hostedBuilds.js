@@ -47,6 +47,18 @@ export function jamEligibilityDecision({ thread, channel, jam, submission }) {
   return { eligible: true, reason: 'eligible' };
 }
 
+export function discordJamPhaseDecision({ appliedTags, activeTagId, votingTagId, finishedTagId }) {
+  if (!Array.isArray(appliedTags)) return { phase: null, reason: 'tags-unavailable' };
+  const matches = [
+    ['active', activeTagId],
+    ['voting', votingTagId],
+    ['finished', finishedTagId],
+  ].filter(([, tagId]) => typeof tagId === 'string' && appliedTags.includes(tagId));
+  if (matches.length === 0) return { phase: 'upcoming', reason: 'no-lifecycle-tag' };
+  if (matches.length > 1) return { phase: null, reason: 'multiple-lifecycle-tags' };
+  return { phase: matches[0][0], reason: 'exact-lifecycle-tag' };
+}
+
 export function phaseTransitionAllowed(from, to) {
   const transitions = {
     upcoming: new Set(['active']),
