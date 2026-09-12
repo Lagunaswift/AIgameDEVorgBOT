@@ -11,6 +11,11 @@ concurrency:
   group: mygame-firestore-emulator-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # Deterministic public fixture used by existing Showcase exporter regression tests.
+  # This is not a Discord credential.
+  GUILD_ID: '1051088980176805919'
+
 jobs:
   firestore-emulator:
     runs-on: ubuntu-latest
