@@ -1,0 +1,251 @@
+diff --git a/README.md b/README.md
+index 1a16bf3..144a322 100644
+--- a/README.md
++++ b/README.md
+@@ -32,3 +32,2 @@ Use `.env.example` as the configuration reference; actual credentials belong in
+ | `/mygame publish [status]` | Owner of an approved registered game thread; create/reuse its one Project. Explicit status required for creation. |
+-| `/projecturl url:<URL>` | Owner; transitional playable URL on registered thread |
+ | `/assignjam jam_id:<ID>` | Moderator; associate current registered thread with a jam |
+@@ -68,3 +67,3 @@ One game has one Discord thread, with updates inside it. Moderator-only Publish
+ - Project and Showcase export both require the live moderated approval tag. Missing approval produces explicit withholding evidence, not data deletion. Operational errors and conflicting source associations abort the candidate export.
+-- `/projecturl` remains a legacy thread URL; Project editing happens on the authenticated website. Its eventual retirement is tracked in the shared roadmap.
++- `/projecturl` is retired. Use `/mygame manage` in the existing game thread to edit Project links. Existing unlinked thread URLs are retained read-only; linked/public Projects supply their own destinations. No legacy records are deleted or automatically migrated.
+ 
+diff --git a/docs/project-destinations-v2.md b/docs/project-destinations-v2.md
+new file mode 100644
+index 0000000..e4d8952
+--- /dev/null
++++ b/docs/project-destinations-v2.md
+@@ -0,0 +1,17 @@
++# Project destination ownership: V2
++
++The owner authorised code continuation and deployment on 12 September 2026. This package does not enable hosted builds.
++
++## Rules
++
++- `/projecturl` is retired from registration, command help and owner hints.
++- A stale Discord invocation replies privately and does not call the old handler.
++- `/mygame manage` opens the existing Project editor. A new Project still requires the existing moderator-approved creation flow and an owner-selected status.
++- Approved linked Showcase destinations come from the exact same-owner, fixed-source Project already exported by the moderation pipeline.
++- An empty Project destination stays empty. An unpublished Project does not expose private destinations or resurrect stale thread metadata.
++- Existing unlinked thread URLs stay read-only. There is no data deletion, reassignment, inference or automatic database migration.
++- `/assignjam`, voting, scoring identity and moderator approval semantics are unchanged.
++
++Tests cover structured destination priority, exact exporter wiring, explicit removal, owner unpublication, command registry retirement and cached-command guidance. Site tests additionally cover private/malformed joins and independent public Jam browsing.
++
++The existing startup registry performs the normal guild command sync after deployment. A Railway success is deployment evidence, not proof that every Discord client has refreshed its command menu.
+diff --git a/scripts/export-site-data.mjs b/scripts/export-site-data.mjs
+index fce8b01..3247d2c 100644
+--- a/scripts/export-site-data.mjs
++++ b/scripts/export-site-data.mjs
+@@ -10,2 +10,3 @@
+ 
++import { projectDestination } from '../src/lib/projectDestination.js';
+ import 'dotenv/config';
+@@ -566,3 +567,3 @@ function resolveShowcaseProjectFields(data, channel, threadId, projectsById, exp
+   if (!record.prepared || record.data.publishToSite !== true || !exportedProjectIds.has(record.id)) {
+-    return { activityTitle, projectId: null, projectSlug: null, state: null };
++    return { activityTitle, projectId: null, projectSlug: null, state: null, projectUrl: null };
+   }
+@@ -585,2 +586,3 @@ function resolveShowcaseProjectFields(data, channel, threadId, projectsById, exp
+     projectSlug: record.prepared.project.slug,
++    projectUrl: projectDestination(record.prepared.project),
+     state: archived ? 'archived' : 'open',
+diff --git a/src/commands/help.js b/src/commands/help.js
+index 834a0ca..a11659b 100644
+--- a/src/commands/help.js
++++ b/src/commands/help.js
+@@ -7,3 +7,2 @@ const COMMUNITY_COMMANDS = [
+   ['`/mygame publish`', 'Owner: request publication for this moderator-approved game thread.'],
+-  ['`/projecturl`', 'Owner: save the playable URL for this thread. It does not publish a Project page.'],
+   ['`/posttemplate`', 'Get a copyable template for build-help, playtest, or update posts.'],
+diff --git a/src/commands/projectmetadata.js b/src/commands/projectmetadata.js
+index d50bd7d..94c7d71 100644
+--- a/src/commands/projectmetadata.js
++++ b/src/commands/projectmetadata.js
+@@ -2,4 +2,4 @@ import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+ import { isMod } from '../lib/permissions.js';
+-import { normalizeJamId, normalizeProjectUrl } from '../lib/publicMetadata.js';
+-import { assignThreadJam, getThread, setThreadProjectUrl } from '../services/threads.js';
++import { normalizeJamId } from '../lib/publicMetadata.js';
++import { assignThreadJam, getThread } from '../services/threads.js';
+ 
+@@ -18,37 +18,2 @@ async function getCurrentThread(interaction) {
+ export const commands = [
+-  {
+-    data: new SlashCommandBuilder()
+-      .setName('projecturl')
+-      .setDescription('Owner: save playable URL metadata for this registered thread.')
+-      .addStringOption((option) =>
+-        option.setName('url').setDescription('An http(s) playable project URL').setRequired(true),
+-      ),
+-
+-    async execute(interaction) {
+-      const projectUrl = normalizeProjectUrl(interaction.options.getString('url'));
+-      if (!projectUrl) {
+-        await interaction.reply({
+-          content: 'Please provide a valid http:// or https:// URL.',
+-          ephemeral: true,
+-        });
+-        return;
+-      }
+-
+-      const thread = await getCurrentThread(interaction);
+-      if (!thread) return;
+-      if (thread.ownerId !== interaction.user.id) {
+-        await interaction.reply({
+-          content: 'Only this registered thread’s owner can set its playable URL.',
+-          ephemeral: true,
+-        });
+-        return;
+-      }
+-
+-      await setThreadProjectUrl(thread.threadId, projectUrl);
+-      await interaction.reply({
+-        content: 'Playable URL saved for this thread. It does not publish or create a Project page. The **Publish to site** tag controls this thread’s Showcase listing.',
+-        ephemeral: true,
+-      });
+-    },
+-  },
+   {
+diff --git a/src/events/interactionCreate.js b/src/events/interactionCreate.js
+index bff9e83..33a138e 100644
+--- a/src/events/interactionCreate.js
++++ b/src/events/interactionCreate.js
+@@ -23,2 +23,10 @@ export async function execute(interaction) {
+ 
++  // Old Discord clients may still send the retired command. Never run a stale writer.
++  if (interaction.commandName === 'projecturl') {
++    try {
++      await interaction.reply({ content: 'The /projecturl command is retired. Use /mygame manage in your existing game thread, then edit Platforms & destinations. No Project yet? Ask a moderator to review the game, then use /mygame publish with a status.', ephemeral: true });
++    } catch { /* Expired interactions must not restart a retired mutation. */ }
++    return;
++  }
++
+   // Slash-command visibility settings are not a substitute for server-side authority.
+diff --git a/src/lib/projectDestination.js b/src/lib/projectDestination.js
+new file mode 100644
+index 0000000..45df371
+--- /dev/null
++++ b/src/lib/projectDestination.js
+@@ -0,0 +1,10 @@
++// Consume only an already-approved/public Project. Never infer activity build URLs.
++export function projectDestination(project) {
++  if (!project) return null;
++  const links = Array.isArray(project.links) ? [...project.links].sort((a, b) => a.priority - b.priority) : [];
++  const preferred = ['playable', 'released'].includes(project.status)
++    ? ['play', 'download', 'itch', 'steam', 'website']
++    : ['website', 'play', 'download', 'itch', 'steam'];
++  const link = preferred.map((type) => links.find((item) => item.type === type)).find(Boolean);
++  return link?.url ?? project.projectUrl ?? null;
++}
+diff --git a/src/services/helpfulHint.js b/src/services/helpfulHint.js
+index 0036868..810af9a 100644
+--- a/src/services/helpfulHint.js
++++ b/src/services/helpfulHint.js
+@@ -35,4 +35,4 @@ export function buildHelpfulHintMessage({ emoji, threadName, welcome = false })
+     `When feedback helps, react to the comment with ${emoji}. Eligible comments earn a feedback ` +
+-    `point under the server's length and cap rules. As the thread owner, use **/projecturl** here to save the playable URL. This does ` +
+-    `not publish or create a Project page. The **Publish to site** forum tag controls this ` +
++    `point under the server's length and cap rules. Use **/mygame manage** in your existing game thread to edit your Project and its playable links. ` +
++    `No Project yet? Ask a moderator to review the game, then use **/mygame publish** with a status. The **Publish to site** forum tag controls this ` +
+     `thread's Showcase listing. Without that tag, it stays out of Showcase. Project publication is a separate setting.`;
+diff --git a/src/services/threads.js b/src/services/threads.js
+index 53561c2..9e1e010 100644
+--- a/src/services/threads.js
++++ b/src/services/threads.js
+@@ -7,3 +7,3 @@
+ import { getDb, serverTimestamp, Timestamp } from '../firebase.js';
+-import { normalizeJamId, normalizeProjectUrl } from '../lib/publicMetadata.js';
++import { normalizeJamId } from '../lib/publicMetadata.js';
+ 
+@@ -69,10 +69,4 @@ export async function getThread(threadId) {
+ 
+-// Public metadata is set only by slash-command handlers after their ownership/mod checks.
+-// Keeping it in the thread record means the exporter never has to infer it from prose.
+-export async function setThreadProjectUrl(threadId, projectUrl) {
+-  const normalized = normalizeProjectUrl(projectUrl);
+-  if (!normalized) throw new Error('project URL must be an http(s) URL');
+-  await threadsRef().doc(threadId).update({ projectUrl: normalized });
+-}
+-
++// Legacy thread.projectUrl values are retained read-only for unlinked records.
++// Project destinations are edited only through the authenticated owner editor.
+ export async function assignThreadJam(threadId, jamId) {
+diff --git a/test/export-site-data.test.mjs b/test/export-site-data.test.mjs
+index 3291634..a5a685a 100644
+--- a/test/export-site-data.test.mjs
++++ b/test/export-site-data.test.mjs
+@@ -230 +230,19 @@ test('Showcase does not silently clear an image when reply history is unavailabl
+ });
++
++test('linked Showcase destination comes from approved Project data, not stale Thread metadata', async () => {
++  const makeProject=(project)=>new Map([['project-1',{id:'project-1',data:{projectId:'project-1',ownerId:OWNER,publishToSite:true},prepared:{id:'project-1',ownerId:OWNER,profileThreadId:THREAD,project:{slug:'guild-game',status:'playable',links:[],...project}}}]]);
++  const thread=docSnap({threadId:THREAD,forumId:FORUM,ownerId:OWNER,mode:'showcase',projectId:'project-1',projectUrl:'https://example.com/old'});
++  const current=await processShowcaseThread(thread,ctx({projectsById:makeProject({projectUrl:'https://example.com/current'}),exportedProjectIds:new Set(['project-1'])}));
++  assert.equal(current.game.projectUrl,'https://example.com/current');
++  const removed=await processShowcaseThread(thread,ctx({projectsById:makeProject({projectUrl:null}),exportedProjectIds:new Set(['project-1'])}));
++  assert.equal(removed.game.projectUrl,null);
++  const structured=await processShowcaseThread(thread,ctx({projectsById:makeProject({projectUrl:'https://example.com/site',links:[{type:'play',url:'https://example.com/play',priority:1}]}),exportedProjectIds:new Set(['project-1'])}));
++  assert.equal(structured.game.projectUrl,'https://example.com/play');
++});
++
++test('owner-unpublished Project does not leak its destination or resurrect old Thread URL', async () => {
++  const projectsById=new Map([['project-1',{id:'project-1',data:{projectId:'project-1',ownerId:OWNER,publishToSite:false,projectUrl:'https://private.example'},prepared:null}]]);
++  const result=await processShowcaseThread(docSnap({threadId:THREAD,forumId:FORUM,ownerId:OWNER,mode:'showcase',projectId:'project-1',projectUrl:'https://old.example'}),ctx({projectsById,exportedProjectIds:new Set()}));
++  assert.equal(result.game.projectUrl,null);
++  assert.equal(result.game.projectId,null);
++});
+diff --git a/test/helpfulHint.test.mjs b/test/helpfulHint.test.mjs
+index 62c7cb0..ecb5264 100644
+--- a/test/helpfulHint.test.mjs
++++ b/test/helpfulHint.test.mjs
+@@ -8,3 +8,4 @@ test('helpful hint explains feedback, playable links, and opt-in publishing', ()
+   assert.match(message, /react to the comment with 🙌/);
+-  assert.match(message, /\/projecturl/);
++  assert.match(message, /\/mygame manage/);
++  assert.doesNotMatch(message, /\/projecturl/);
+   assert.match(message, /Publish to site/);
+@@ -12,3 +13,3 @@ test('helpful hint explains feedback, playable links, and opt-in publishing', ()
+   assert.match(message, /Project publication is a separate setting/);
+-  assert.match(message, /does not publish or create a Project page/);
++  assert.match(message, /moderator to review the game/);
+   assert.doesNotMatch(message, /\b(?:\d{15,})\b/);
+diff --git a/test/project-destinations.test.mjs b/test/project-destinations.test.mjs
+new file mode 100644
+index 0000000..c24893f
+--- /dev/null
++++ b/test/project-destinations.test.mjs
+@@ -0,0 +1,32 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { projectDestination } from '../src/lib/projectDestination.js';
++import { commands } from '../src/commands/projectmetadata.js';
++import { execute } from '../src/events/interactionCreate.js';
++import { loadCommands } from '../src/loadCommands.js';
++
++test('Project destinations use structured link policy before primary legacy-compatible Project URL', () => {
++  const links=[{type:'website',url:'https://example.com',priority:1},{type:'play',url:'https://example.com/play',priority:3},{type:'play',url:'https://example.com/first',priority:2}];
++  const p={status:'playable',links,projectUrl:'https://example.com/old'};
++  assert.equal(projectDestination(p),'https://example.com/first');
++  assert.equal(projectDestination({...p,status:'development'}),'https://example.com');
++  assert.equal(projectDestination({...p,links:[]}),p.projectUrl);
++  assert.equal(projectDestination({...p,links:[],projectUrl:null}),null);
++  assert.equal(projectDestination({...p,links:[{type:'devlog',url:'https://example.com/log',priority:0}],projectUrl:null}),null);
++});
++
++test('retired URL command is absent from the metadata group and actual registration registry', async () => {
++  assert.deepEqual(commands.map((command)=>command.data.name),['assignjam']);
++  const registry=await loadCommands();
++  assert.equal(registry.has('projecturl'),false);
++  assert.equal(registry.has('assignjam'),true);
++  assert.equal(registry.has('mygame'),true);
++});
++
++test('a cached retired command gets private guidance and never reaches a stale write handler', async () => {
++  const replies=[];
++  await execute({isChatInputCommand:()=>true,commandName:'projecturl',client:{commands:{get:()=>assert.fail('retired handler must not be looked up')}},reply:async (reply)=>replies.push(reply)});
++  assert.equal(replies.length,1);
++  assert.equal(replies[0].ephemeral,true);
++  assert.match(replies[0].content,/mygame manage/);
++});
