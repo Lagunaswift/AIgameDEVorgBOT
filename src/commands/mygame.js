@@ -7,9 +7,11 @@ import { createAndPublishProjectForThread, setProjectPublication } from '../serv
 import { getThread } from '../services/threads.js';
 import { extractText } from '../../scripts/site-export-shared.mjs';
 
+const DEFAULT_SITE_ORIGIN = 'https://www.aigamedevs.org';
+
 const data = new SlashCommandBuilder()
   .setName('mygame')
-  .setDescription('Publish this approved game thread as a Project.')
+  .setDescription('Publish or manage the Project linked to this game thread.')
   .addSubcommand((subcommand) => subcommand
     .setName('publish')
     .setDescription('Publish the Project for this approved game thread.')
@@ -18,7 +20,10 @@ const data = new SlashCommandBuilder()
       .setDescription('Required only when creating a new Project from this thread')
       .setRequired(false)
       .addChoices(...PROJECT_STATUSES.map((value) => ({ name: value, value })))),
-  );
+  )
+  .addSubcommand((subcommand) => subcommand
+    .setName('manage')
+    .setDescription('Open the website tools for this thread\'s existing Project.'));
 
 function errorMessage(error) {
   if (/Registered thread not found|Only the thread owner/.test(error.message)) return 'Use this command inside a registered thread that you own.';
@@ -43,6 +48,12 @@ function platformsFromAppliedTags(channel) {
   return platformsFromTagNames(channel.appliedTags
     .map((tagId) => tags.find((tag) => tag.id === tagId)?.name)
     .filter((name) => typeof name === 'string')).platforms;
+}
+
+function managementUrl(projectId, siteOrigin) {
+  const origin = new URL(siteOrigin || DEFAULT_SITE_ORIGIN);
+  if (origin.protocol !== 'https:') throw new Error('SITE_ORIGIN must use HTTPS');
+  return new URL(`/manage/projects/${encodeURIComponent(projectId)}/`, origin).href;
 }
 
 async function createPublishInput(interaction, thread, status) {
@@ -76,17 +87,34 @@ async function isApprovedShowcaseThread(interaction, thread, services) {
 
 export function createMyGameCommand(services = {
   getThread, setProjectPublication, createAndPublishProjectForThread, checkGameApproval, config,
+  siteOrigin: process.env.SITE_ORIGIN || DEFAULT_SITE_ORIGIN,
 }) {
   return {
     data,
     async execute(interaction) {
       await interaction.deferReply({ ephemeral: true });
-      if (interaction.options.getSubcommand() !== 'publish') {
-        await interaction.editReply('That command is no longer supported. Keep updates in the game\'s existing thread and use /mygame publish there.');
+      const subcommand = interaction.options.getSubcommand();
+      if (!['publish', 'manage'].includes(subcommand)) {
+        await interaction.editReply('That command is no longer supported. Keep updates in the game\'s existing thread and use /mygame publish or /mygame manage there.');
         return;
       }
+
       const thread = await getOwnedThread(interaction, services);
       if (!thread) return;
+
+      if (subcommand === 'manage') {
+        if (!thread.projectId) {
+          await interaction.editReply('This thread does not have a Project yet. Use `/mygame publish` after moderator approval to create it.');
+          return;
+        }
+        try {
+          await interaction.editReply(`Manage your Project on AIGAMEDEV:\n${managementUrl(thread.projectId, services.siteOrigin || DEFAULT_SITE_ORIGIN)}`);
+        } catch {
+          await interaction.editReply('The AIGAMEDEV management link is temporarily unavailable.');
+        }
+        return;
+      }
+
       if (!await isApprovedShowcaseThread(interaction, thread, services)) {
         await interaction.editReply('This registered Showcase thread needs the moderator-only Publish to site tag before it can be published.');
         return;
