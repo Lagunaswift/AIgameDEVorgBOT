@@ -41,9 +41,9 @@ test('Jam review fails exact eligibility when the frozen Build does not match', 
   assert.deepEqual(jamReviewDecision(evidence), { status: 'blocked', reasons: ['jam-eligibility-mismatch'] });
 });
 
-test('/jam registry includes setup, phase, status and review', () => {
+test('/jam registry includes setup, phase, status, review and archive', () => {
   const json = createJamCommand().data.toJSON();
-  assert.deepEqual(json.options.map((option) => option.name), ['setup', 'phase', 'status', 'review']);
+  assert.deepEqual(json.options.map((option) => option.name), ['setup', 'phase', 'status', 'review', 'archive']);
 });
 
 test('moving to voting refreshes live Jam eligibility before changing phase and locking', async () => {
@@ -60,6 +60,8 @@ test('moving to voting refreshes live Jam eligibility before changing phase and 
     registerJam: async () => assert.fail('not used'),
     jamStatus: async () => assert.fail('not used'),
     jamReviewQueue: async () => assert.fail('not used'),
+    setJamArchiveDisposition: async () => assert.fail('not used'),
+    finishLockedJamSubmissions: async () => assert.fail('not used'),
     reconcileAllActiveJamEligibility: async () => { calls.push('reconcile'); return { checked: 1, eligible: 1, blocked: 0, errors: [] }; },
     setJamPhaseFromDiscord: async () => { calls.push('phase'); return { phase: 'voting' }; },
     lockQualifiedJamSubmissions: async () => { calls.push('lock'); return [{ status: 'locked' }]; },
@@ -79,6 +81,32 @@ test('moving to voting refreshes live Jam eligibility before changing phase and 
   assert.match(replies.at(-1), /Locked 1 qualified submission/);
 });
 
+test('moving to finished finalizes the exact locked submissions', async () => {
+  const calls = [];
+  const replies = [];
+  const thread = { id: JAM, parentId: '1539971669467332001', name: 'Test Jam', isThread: () => true };
+  const services = {
+    registerJam: async () => assert.fail('not used'),
+    jamStatus: async () => assert.fail('not used'),
+    jamReviewQueue: async () => assert.fail('not used'),
+    setJamArchiveDisposition: async () => assert.fail('not used'),
+    reconcileAllActiveJamEligibility: async () => assert.fail('not used'),
+    lockQualifiedJamSubmissions: async () => assert.fail('not used'),
+    setJamPhaseFromDiscord: async () => { calls.push('phase'); return { phase: 'finished' }; },
+    finishLockedJamSubmissions: async () => { calls.push('finish'); return 3; },
+  };
+  await createJamCommand(services).execute({
+    channel: thread,
+    client: {},
+    user: { id: OWNER },
+    options: { getSubcommand: () => 'phase', getString: (name) => name === 'phase' ? 'finished' : null },
+    deferReply: async () => {},
+    editReply: async (value) => replies.push(value),
+  });
+  assert.deepEqual(calls, ['phase', 'finish']);
+  assert.match(replies.at(-1), /Finalized 3 locked submissions/);
+});
+
 test('/jam review presents ready and blocked reasons without mutating state', async () => {
   const replies = [];
   const thread = { id: JAM, parentId: '1539971669467332001', isThread: () => true };
@@ -86,6 +114,8 @@ test('/jam review presents ready and blocked reasons without mutating state', as
     registerJam: async () => assert.fail('not used'),
     setJamPhaseFromDiscord: async () => assert.fail('not used'),
     lockQualifiedJamSubmissions: async () => assert.fail('not used'),
+    finishLockedJamSubmissions: async () => assert.fail('not used'),
+    setJamArchiveDisposition: async () => assert.fail('not used'),
     reconcileAllActiveJamEligibility: async () => assert.fail('not used'),
     jamStatus: async () => assert.fail('not used'),
     jamReviewQueue: async () => ({
@@ -107,4 +137,34 @@ test('/jam review presents ready and blocked reasons without mutating state', as
   });
   assert.match(replies.at(-1), /READY/);
   assert.match(replies.at(-1), /jam-tag-missing/);
+});
+
+test('/jam archive passes an explicit finished-entry disposition to the service', async () => {
+  let input;
+  const replies = [];
+  const thread = { id: JAM, parentId: '1539971669467332001', isThread: () => true };
+  const services = {
+    registerJam: async () => assert.fail('not used'),
+    setJamPhaseFromDiscord: async () => assert.fail('not used'),
+    lockQualifiedJamSubmissions: async () => assert.fail('not used'),
+    finishLockedJamSubmissions: async () => assert.fail('not used'),
+    reconcileAllActiveJamEligibility: async () => assert.fail('not used'),
+    jamStatus: async () => assert.fail('not used'),
+    jamReviewQueue: async () => assert.fail('not used'),
+    setJamArchiveDisposition: async (value) => {
+      input = value;
+      return { ...value, buildId: 'build_12345678' };
+    },
+  };
+  const values = { project_id: 'project_1', visibility: 'tombstone' };
+  await createJamCommand(services).execute({
+    channel: thread,
+    client: {},
+    user: { id: OWNER },
+    options: { getSubcommand: () => 'archive', getString: (name) => values[name] ?? null },
+    deferReply: async () => {},
+    editReply: async (value) => replies.push(value),
+  });
+  assert.deepEqual(input, { jamId: JAM, projectId: 'project_1', disposition: 'tombstone', moderatorId: OWNER });
+  assert.match(replies.at(-1), /TOMBSTONE/);
 });
