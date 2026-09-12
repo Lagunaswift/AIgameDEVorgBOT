@@ -55,6 +55,45 @@ export async function reconcileJamEligibilityForThread({
   return { status: 'ok', updates };
 }
 
+export async function reconcileAllActiveJamEligibility(client, { db = getDb() } = {}) {
+  const jamsSnap = await db.collection('jams').where('phase', '==', 'active').get();
+  if (jamsSnap.empty) return { checked: 0, eligible: 0, blocked: 0, errors: [] };
+  const activeJamIds = new Set(jamsSnap.docs.map((doc) => doc.id));
+  const submissionsSnap = await db.collection('jamSubmissions').where('state', '==', 'submitted').get();
+  let checked = 0;
+  let eligible = 0;
+  let blocked = 0;
+  const errors = [];
+
+  for (const doc of submissionsSnap.docs) {
+    const submission = doc.data();
+    if (!activeJamIds.has(submission.jamId)) continue;
+    checked += 1;
+    try {
+      const channel = await client.channels.fetch(submission.threadId, { force: true });
+      if (!channel?.isThread?.()) throw new Error('source thread unavailable');
+      const result = await reconcileJamEligibilityForThread({ channel, db });
+      const entry = result.updates.find((item) => item.key === doc.id);
+      if (entry?.eligible) eligible += 1;
+      else blocked += 1;
+    } catch (error) {
+      blocked += 1;
+      errors.push({ submissionId: doc.id, error: error.message });
+      await db.collection('jamEligibility').doc(doc.id).set({
+        jamId: submission.jamId,
+        projectId: submission.projectId,
+        buildId: submission.buildId,
+        threadId: submission.threadId,
+        ownerId: submission.ownerId,
+        eligible: false,
+        reason: 'source-thread-unavailable',
+        updatedAt: serverTimestamp(),
+      }, { merge: false });
+    }
+  }
+  return { checked, eligible, blocked, errors };
+}
+
 export async function clearFinishedJamEligibility(jamId, { db = getDb() } = {}) {
   const snapshot = await db.collection('jamEligibility').where('jamId', '==', jamId).get();
   if (snapshot.empty) return 0;
