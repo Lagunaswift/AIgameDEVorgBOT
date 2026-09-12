@@ -9,22 +9,7 @@ import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js'
 import { scheduleDailyDigest, catchUpDailyDigest } from './services/dailyDigest.js';
 import { getEffectiveConfig } from './services/config.js';
 
-// Event modules, imported once and bound at startup.
-import * as ready from './events/ready.js';
-import * as threadCreate from './events/threadCreate.js';
-import * as messageReactionAdd from './events/messageReactionAdd.js';
-import * as messageReactionRemove from './events/messageReactionRemove.js';
-import * as interactionCreate from './events/interactionCreate.js';
-import * as messageCreate from './events/messageCreate.js';
-
-const EVENT_MODULES = [
-  ready,
-  threadCreate,
-  messageReactionAdd,
-  messageReactionRemove,
-  interactionCreate,
-  messageCreate,
-];
+import { registerEventHandlers } from './eventRegistry.js';
 
 async function main() {
   assertConfig();
@@ -53,15 +38,8 @@ async function main() {
   for (const [name, def] of commands) client.commands.set(name, def);
   console.log(`[startup] loaded ${client.commands.size} commands`);
 
-  // Bind event handlers exactly once. discord.js auto-reconnects on the same client, so
-  // we must not re-register on reconnect.
-  for (const mod of EVENT_MODULES) {
-    if (mod.once) {
-      client.once(mod.name, (...args) => mod.execute(...args));
-    } else {
-      client.on(mod.name, (...args) => mod.execute(...args));
-    }
-  }
+  // Bind once per client; reconnects reuse the same listeners.
+  registerEventHandlers(client);
 
   // Schedule the weekly leaderboard post once we're ready (needs a live client).
   client.once(Events.ClientReady, () => {
