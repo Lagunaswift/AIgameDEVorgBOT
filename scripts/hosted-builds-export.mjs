@@ -1,4 +1,5 @@
 const PUBLIC_SUBMISSION_STATES = new Set(['submitted', 'locked', 'finished']);
+const ARCHIVE_VISIBILITIES = new Set(['playable', 'tombstone', 'suppress']);
 
 function toIso(value) {
   if (value == null) return null;
@@ -79,7 +80,7 @@ export function buildHostedBuildsExport({
   const publicBuilds = new Map();
 
   const referencedBuildIds = new Set();
-  for (const [projectId, state] of states) {
+  for (const [, state] of states) {
     if (state.publishedBuildId) referencedBuildIds.add(state.publishedBuildId);
   }
   for (const doc of submissionDocs) {
@@ -115,19 +116,29 @@ export function buildHostedBuildsExport({
     const project = projects.get(submission.projectId);
     const build = publicBuilds.get(submission.buildId);
     const jam = jams.get(submission.jamId);
-    if (!project || !build || !jam) continue;
+    if (!project || !jam) continue;
 
+    let availability = 'playable';
     if (submission.state === 'submitted') {
-      if (jam.phase !== 'active') continue;
+      if (!build || jam.phase !== 'active') continue;
       const eligibility = eligibilities.get(key);
       if (!eligibility || eligibility.eligible !== true
         || eligibility.projectId !== submission.projectId
         || eligibility.buildId !== submission.buildId
         || eligibility.threadId !== submission.threadId) continue;
     } else if (submission.state === 'locked') {
-      if (jam.phase !== 'voting') continue;
+      if (!build || jam.phase !== 'voting') continue;
     } else if (submission.state === 'finished') {
       if (jam.phase !== 'finished') continue;
+      const archiveVisibility = ARCHIVE_VISIBILITIES.has(submission.archiveVisibility)
+        ? submission.archiveVisibility
+        : 'playable';
+      if (archiveVisibility === 'suppress') continue;
+      if (archiveVisibility === 'tombstone') {
+        availability = 'removed';
+      } else if (!build) {
+        continue;
+      }
     }
 
     seen.add(key);
@@ -137,6 +148,7 @@ export function buildHostedBuildsExport({
       projectSlug: project.slug,
       buildId: submission.buildId,
       state: submission.state,
+      availability,
       submittedAt: toIso(submission.submittedAt),
       lockedAt: toIso(submission.lockedAt),
     });
