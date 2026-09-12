@@ -2,9 +2,15 @@ import { getDb, serverTimestamp } from '../firebase.js';
 import { discordJamPhaseDecision, phaseTransitionAllowed, qualificationDecision } from '../lib/hostedBuilds.js';
 
 const DISCORD_ID_RE = /^\d{17,20}$/;
+const ARCHIVE_VISIBILITIES = new Set(['playable', 'tombstone', 'suppress']);
 
 function assertDiscordId(value, name) {
   if (typeof value !== 'string' || !DISCORD_ID_RE.test(value)) throw new Error(`${name} must be a Discord ID`);
+  return value;
+}
+
+function assertProjectId(value) {
+  if (typeof value !== 'string' || !value || value.includes('/') || value.length > 1500) throw new Error('Invalid Project ID');
   return value;
 }
 
@@ -110,9 +116,7 @@ export async function reconcileJamPhaseFromThread(thread, { db = getDb(), before
   if (!phaseTransitionAllowed(jam.phase, decision.phase)) {
     return { status: 'blocked-transition', from: jam.phase, to: decision.phase, reason: decision.reason };
   }
-  if (decision.phase === 'voting' && typeof beforeVoting === 'function') {
-    await beforeVoting();
-  }
+  if (decision.phase === 'voting' && typeof beforeVoting === 'function') await beforeVoting();
   const updated = await setJamPhase(jam.id, decision.phase, { db });
   return { status: 'updated', phase: updated.phase };
 }
@@ -183,6 +187,7 @@ export async function jamReviewQueue(jamId, { db = getDb() } = {}) {
       buildId: submission.buildId,
       threadId: submission.threadId,
       state: submission.state,
+      archiveVisibility: submission.archiveVisibility ?? 'playable',
       ...decision,
     });
   }
@@ -222,10 +227,55 @@ export async function lockQualifiedJamSubmissions(jamId, { db = getDb(), timesta
       results.push({ submissionId: doc.id, status: 'blocked', reason: decision.reason });
       continue;
     }
-    await doc.ref.update({ state: 'locked', lockedAt: timestamp, updatedAt: timestamp });
+    await doc.ref.update({ state: 'locked', lockedAt: timestamp, archiveVisibility: 'playable', updatedAt: timestamp });
     results.push({ submissionId: doc.id, status: 'locked', buildId: submission.buildId });
   }
   return results;
+}
+
+export async function finishLockedJamSubmissions(jamId, { db = getDb(), timestamp = serverTimestamp() } = {}) {
+  const jam = await getJam(jamId, { db });
+  if (!jam) throw new Error('Jam is not registered');
+  if (jam.phase !== 'finished') throw new Error('Jam must be finished before submissions are finalized');
+  const snapshot = await db.collection('jamSubmissions').where('jamId', '==', jam.id).get();
+  const locked = snapshot.docs.filter((doc) => doc.data()?.state === 'locked');
+  if (!locked.length) return 0;
+  const batch = db.batch();
+  for (const doc of locked) {
+    batch.update(doc.ref, {
+      state: 'finished',
+      finishedAt: timestamp,
+      archiveVisibility: doc.data()?.archiveVisibility ?? 'playable',
+      updatedAt: timestamp,
+    });
+  }
+  await batch.commit();
+  return locked.length;
+}
+
+export async function setJamArchiveDisposition({ jamId, projectId, disposition, moderatorId, db = getDb(), timestamp = serverTimestamp() }) {
+  const normalizedJamId = assertDiscordId(jamId, 'jamId');
+  const normalizedProjectId = assertProjectId(projectId);
+  const normalizedModeratorId = assertDiscordId(moderatorId, 'moderatorId');
+  if (!ARCHIVE_VISIBILITIES.has(disposition)) throw new Error('Invalid archive disposition');
+  const jamRef = db.collection('jams').doc(normalizedJamId);
+  const submissionRef = db.collection('jamSubmissions').doc(`${normalizedJamId}_${normalizedProjectId}`);
+  return db.runTransaction(async (transaction) => {
+    const [jamSnap, submissionSnap] = await transaction.getAll(jamRef, submissionRef);
+    if (!jamSnap.exists || !submissionSnap.exists) throw new Error('Jam submission not found');
+    if (jamSnap.data()?.phase !== 'finished') throw new Error('Archive disposition is available only after the Jam is finished');
+    const submission = submissionSnap.data();
+    if (submission.projectId !== normalizedProjectId || submission.jamId !== normalizedJamId || submission.state !== 'finished') {
+      throw new Error('Only an exact finished Jam submission can change archive disposition');
+    }
+    transaction.update(submissionRef, {
+      archiveVisibility: disposition,
+      archiveUpdatedBy: normalizedModeratorId,
+      archiveUpdatedAt: timestamp,
+      updatedAt: timestamp,
+    });
+    return { jamId: normalizedJamId, projectId: normalizedProjectId, buildId: submission.buildId, disposition };
+  });
 }
 
 export async function jamStatus(jamId, { db = getDb() } = {}) {
