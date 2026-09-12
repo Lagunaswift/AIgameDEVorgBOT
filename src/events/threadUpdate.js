@@ -1,8 +1,8 @@
 import { Events } from 'discord.js';
 import { config } from '../config.js';
 import { reconcileHostedBuildsForThread } from '../services/hostedBuilds.js';
-import { reconcileJamEligibilityForThread } from '../services/jamEligibility.js';
-import { reconcileJamPhaseFromThread } from '../services/jams.js';
+import { reconcileAllActiveJamEligibility, reconcileJamEligibilityForThread } from '../services/jamEligibility.js';
+import { lockQualifiedJamSubmissions, reconcileJamPhaseFromThread } from '../services/jams.js';
 
 export const name = Events.ThreadUpdate;
 export const once = false;
@@ -33,9 +33,17 @@ export async function execute(oldThread, newThread) {
     }
 
     if (tagsChanged(oldThread, newThread)) {
-      const phase = await reconcileJamPhaseFromThread(newThread);
+      const phase = await reconcileJamPhaseFromThread(newThread, {
+        beforeVoting: async () => reconcileAllActiveJamEligibility(newThread.client),
+      });
       if (phase.status === 'updated' || phase.status === 'invalid-tags' || phase.status === 'blocked-transition') {
         console.log(`[threadUpdate] jam phase thread=${newThread.id} status=${phase.status}${phase.phase ? ` phase=${phase.phase}` : ''}`);
+      }
+      if (phase.status === 'updated' && phase.phase === 'voting') {
+        const results = await lockQualifiedJamSubmissions(newThread.id);
+        const locked = results.filter((item) => item.status === 'locked').length;
+        const blocked = results.filter((item) => item.status === 'blocked').length;
+        console.log(`[threadUpdate] jam voting lock thread=${newThread.id} locked=${locked} blocked=${blocked}`);
       }
 
       const eligibility = await reconcileJamEligibilityForThread({ channel: newThread });
