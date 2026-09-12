@@ -1,4 +1,5 @@
 import { Events } from 'discord.js';
+import { hostedPlatformEnabled } from '../lib/hostedFeatureFlags.js';
 import { config } from '../config.js';
 import { reconcileHostedBuildsForThread } from '../services/hostedBuilds.js';
 import { reconcileAllActiveJamEligibility, reconcileJamEligibilityForThread } from '../services/jamEligibility.js';
@@ -18,6 +19,7 @@ function tagsChanged(oldThread, newThread) {
 }
 
 export async function execute(oldThread, newThread) {
+  if (!hostedPlatformEnabled()) return;
   try {
     const publishTagId = config.sitePublishTagId;
     if (publishTagId) {

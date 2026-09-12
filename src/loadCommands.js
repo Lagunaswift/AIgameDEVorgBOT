@@ -8,10 +8,12 @@ import { readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { hostedPlatformEnabled } from './lib/hostedFeatureFlags.js';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const commandsDir = join(here, 'commands');
 
-export async function loadCommands() {
+export async function loadCommands(env = process.env) {
   const files = (await readdir(commandsDir)).filter((f) => f.endsWith('.js'));
   const map = new Map();
 
@@ -33,6 +35,7 @@ export async function loadCommands() {
         console.warn(`[commands] a command in ${file} is missing data/execute; skipping`);
         continue;
       }
+      if (['jam', 'build'].includes(def.data.name) && !hostedPlatformEnabled(env)) continue;
       map.set(def.data.name, def);
     }
   }

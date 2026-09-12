@@ -2,6 +2,7 @@
 // once at startup (see index.js), so nothing per-connection happens here.
 
 import { Events } from 'discord.js';
+import { hostedPlatformEnabled } from '../lib/hostedFeatureFlags.js';
 import { getEffectiveConfig } from '../services/config.js';
 import { reconcileAllActiveJamEligibility } from '../services/jamEligibility.js';
 import { startBuildReportNotifier } from '../services/buildReports.js';
@@ -27,6 +28,11 @@ export async function execute(client) {
     );
   } catch (err) {
     console.error('[ready] could not load config:', err.message);
+  }
+
+  if (!hostedPlatformEnabled()) {
+    console.log('[ready] Hosted Builds runtime/moderation jobs disabled pending provider acceptance');
+    return;
   }
 
   startBuildReportNotifier(client);
