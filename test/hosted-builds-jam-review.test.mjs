@@ -38,7 +38,7 @@ test('Jam review distinguishes ready, tag-blocked and approval-blocked entries',
 test('Jam review fails exact eligibility when the frozen Build does not match', () => {
   const evidence = baseEvidence();
   evidence.eligibility = { ...evidence.eligibility, buildId: 'build_other' };
-  assert.deepEqual(jamReviewDecision(evidence), { status: 'blocked', reasons: ['eligible'] });
+  assert.deepEqual(jamReviewDecision(evidence), { status: 'blocked', reasons: ['jam-eligibility-mismatch'] });
 });
 
 test('/jam registry includes setup, phase, status and review', () => {
