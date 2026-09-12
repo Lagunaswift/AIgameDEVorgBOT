@@ -31,6 +31,22 @@ export function qualificationDecision({ project, build, submission, moderatorApp
   return { qualified: true, reason: 'qualified' };
 }
 
+export function jamEligibilityDecision({ thread, channel, jam, submission }) {
+  if (!thread || !channel || !jam) return { eligible: false, reason: 'missing' };
+  if (thread.mode !== 'showcase' || !thread.projectId || !thread.ownerId || thread.threadId !== channel.id) {
+    return { eligible: false, reason: 'thread-link' };
+  }
+  if (!submission) return { eligible: false, reason: 'no-submission' };
+  if (submission.state !== 'submitted') return { eligible: false, reason: 'submission-state' };
+  if (submission.ownerId !== thread.ownerId || submission.projectId !== thread.projectId || submission.threadId !== channel.id) {
+    return { eligible: false, reason: 'submission-mismatch' };
+  }
+  if (!jam.submissionTagId || !Array.isArray(channel.appliedTags) || !channel.appliedTags.includes(jam.submissionTagId)) {
+    return { eligible: false, reason: 'jam-tag-missing' };
+  }
+  return { eligible: true, reason: 'eligible' };
+}
+
 export function phaseTransitionAllowed(from, to) {
   const transitions = {
     upcoming: new Set(['active']),
