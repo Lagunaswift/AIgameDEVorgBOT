@@ -3,7 +3,8 @@
 // Runs server-side with full access, so Firestore security rules should deny all
 // client access (see README). Never log the service account or any token.
 
-import admin from 'firebase-admin';
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 import { config } from './config.js';
 
 let db = null;
@@ -34,13 +35,14 @@ export function initFirebase() {
   }
   firebaseProjectId = serviceAccount.project_id;
 
-  if (admin.apps.length === 0) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+  if (getApps().length === 0) {
+    initializeApp({
+      credential: cert(serviceAccount),
+      projectId: serviceAccount.project_id,
     });
   }
 
-  db = admin.firestore();
+  db = getFirestore();
   db.settings({ ignoreUndefinedProperties: true });
   return db;
 }
@@ -53,7 +55,7 @@ export function getDb() {
 }
 
 // The Firebase project id from the initialised service-account credential. Used by
-// operator scripts to display/verify the target they are about to write to — never
+// operator scripts to display/verify the target they are about to write to, never
 // derived from non-public SDK internals.
 export function getFirebaseProjectId() {
   if (!firebaseProjectId) {
@@ -62,9 +64,8 @@ export function getFirebaseProjectId() {
   return firebaseProjectId;
 }
 
-// Re-export the server timestamp + field-value helpers so callers don't import admin directly.
-export const FieldValue = admin.firestore.FieldValue;
-export const Timestamp = admin.firestore.Timestamp;
+// Re-export timestamp + field-value helpers so callers stay isolated from SDK imports.
+export { FieldValue, Timestamp };
 export function serverTimestamp() {
-  return admin.firestore.FieldValue.serverTimestamp();
+  return FieldValue.serverTimestamp();
 }

@@ -12,17 +12,18 @@ import test from 'node:test';
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 
 test('transaction apply against the Firestore emulator', { skip: emulatorHost ? false : 'FIRESTORE_EMULATOR_HOST not set; emulator integration skipped' }, async (t) => {
-  const admin = (await import('firebase-admin')).default;
+  const { deleteApp, getApp, getApps, initializeApp } = await import('firebase-admin/app');
+  const { getFirestore } = await import('firebase-admin/firestore');
   const {
     applyMigrationPlanTransaction,
     applyMigrationRecordTransaction,
   } = await import('../src/services/migration.js');
 
   const appName = 'migrate-emulator-test';
-  const app = admin.apps.some((a) => a.name === appName)
-    ? admin.app(appName)
-    : admin.initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'aigame-dev-test' }, appName);
-  const db = app.firestore();
+  const app = getApps().some((candidate) => candidate.name === appName)
+    ? getApp(appName)
+    : initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'aigame-dev-test' }, appName);
+  const db = getFirestore(app);
   db.settings({ ignoreUndefinedProperties: true });
 
   const OWNER = '123456789012345678';
@@ -107,7 +108,7 @@ test('transaction apply against the Firestore emulator', { skip: emulatorHost ? 
       resumeThreadRef.delete(), remainingThreadRef.delete(),
       resumeProjectRef.delete(), remainingProjectRef.delete(),
     ]);
-    await app.delete();
+    await deleteApp(app);
   });
   const planEntry = (threadId, projectId, slug, disposition) => ({
     planRecord: {
