@@ -54,8 +54,8 @@ async function claimReport(reportRef, workerId, nowMs, db) {
   });
 }
 
-async function releaseFailedClaim(reportRef, workerId) {
-  await getDb().runTransaction(async (transaction) => {
+async function releaseFailedClaim(reportRef, workerId, db) {
+  await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(reportRef);
     if (!snap.exists) return;
     const report = snap.data();
@@ -106,7 +106,7 @@ export async function notifyPendingBuildReports(client, { db = getDb(), workerId
       });
       sent += 1;
     } catch (error) {
-      await releaseFailedClaim(doc.ref, workerId);
+      await releaseFailedClaim(doc.ref, workerId, db);
       console.error(`[buildReports] failed to notify ${doc.id}:`, error.message);
     }
   }
