@@ -1,7 +1,7 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
-import { normalizeJamId, normalizeProjectUrl } from '../lib/publicMetadata.js';
-import { assignThreadJam, getThread, setThreadProjectUrl } from '../services/threads.js';
+import { normalizeJamId } from '../lib/publicMetadata.js';
+import { assignThreadJam, getThread } from '../services/threads.js';
 
 async function getCurrentThread(interaction) {
   const thread = await getThread(interaction.channelId);
@@ -16,41 +16,6 @@ async function getCurrentThread(interaction) {
 }
 
 export const commands = [
-  {
-    data: new SlashCommandBuilder()
-      .setName('projecturl')
-      .setDescription('Owner: save playable URL metadata for this registered thread.')
-      .addStringOption((option) =>
-        option.setName('url').setDescription('An http(s) playable project URL').setRequired(true),
-      ),
-
-    async execute(interaction) {
-      const projectUrl = normalizeProjectUrl(interaction.options.getString('url'));
-      if (!projectUrl) {
-        await interaction.reply({
-          content: 'Please provide a valid http:// or https:// URL.',
-          ephemeral: true,
-        });
-        return;
-      }
-
-      const thread = await getCurrentThread(interaction);
-      if (!thread) return;
-      if (thread.ownerId !== interaction.user.id) {
-        await interaction.reply({
-          content: 'Only this registered thread’s owner can set its playable URL.',
-          ephemeral: true,
-        });
-        return;
-      }
-
-      await setThreadProjectUrl(thread.threadId, projectUrl);
-      await interaction.reply({
-        content: 'Playable URL saved for this thread. It does not publish or create a Project page. The **Publish to site** tag controls this thread’s Showcase listing.',
-        ephemeral: true,
-      });
-    },
-  },
   {
     data: new SlashCommandBuilder()
       .setName('assignjam')

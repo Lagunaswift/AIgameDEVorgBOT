@@ -6,10 +6,11 @@ test('helpful hint explains feedback, playable links, and opt-in publishing', ()
   const message = buildHelpfulHintMessage({ emoji: '🙌', threadName: 'Moon Base', welcome: true });
 
   assert.match(message, /react to the comment with 🙌/);
-  assert.match(message, /\/projecturl/);
+  assert.match(message, /\/mygame manage/);
+  assert.doesNotMatch(message, /\/projecturl/);
   assert.match(message, /Publish to site/);
   assert.match(message, /stays out of Showcase/);
   assert.match(message, /Project publication is a separate setting/);
-  assert.match(message, /does not publish or create a Project page/);
+  assert.match(message, /moderator to review the game/);
   assert.doesNotMatch(message, /\b(?:\d{15,})\b/);
 });

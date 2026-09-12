@@ -30,7 +30,6 @@ Use `.env.example` as the configuration reference; actual credentials belong in 
 | `/posttemplate type:<choice>` | Private copyable build-help, playtest or update template |
 | `/gameidea [theme]` | Byte game pitch, with cooldown and AI-call cap |
 | `/mygame publish [status]` | Owner of an approved registered game thread; create/reuse its one Project. Explicit status required for creation. |
-| `/projecturl url:<URL>` | Owner; transitional playable URL on registered thread |
 | `/assignjam jam_id:<ID>` | Moderator; associate current registered thread with a jam |
 | `/posthelp` | Moderator; post/pin command reference |
 | `/rescan` | Moderator; recover thread registration and currently observable helpful reactions |
@@ -66,7 +65,7 @@ One game has one Discord thread, with updates inside it. Moderator-only Publish 
 - Project timeline activity also requires `publishOnProject: true` and a valid purpose. Linking does not turn it on.
 - Hero/gallery source selection is separate from timeline visibility. Sources must be linked same-owner public Discord threads with owner-authored images.
 - Project and Showcase export both require the live moderated approval tag. Missing approval produces explicit withholding evidence, not data deletion. Operational errors and conflicting source associations abort the candidate export.
-- `/projecturl` remains a legacy thread URL; Project editing happens on the authenticated website. Its eventual retirement is tracked in the shared roadmap.
+- `/projecturl` is retired. Use `/mygame manage` in the existing game thread to edit Project links. Existing unlinked thread URLs are retained read-only; linked/public Projects supply their own destinations. No legacy records are deleted or automatically migrated.
 
 Direct website uploads, video ingestion, hosted per-game Wiki articles, structured builds and per-game roadmaps are not implemented by this bot pipeline.
 
