@@ -84,3 +84,64 @@ export async function reconcileHostedBuildsForThread({ threadId, moderatorApprov
   if (thread.mode !== 'showcase' || !thread.projectId) return { status: 'not-project-source', decisions: [] };
   return reconcileHostedBuildsForProject({ projectId: thread.projectId, moderatorApproved, db, runtimeControl });
 }
+
+export async function disableHostedBuild({
+  buildId,
+  reason,
+  moderatorId,
+  db = getDb(),
+  runtimeControl = createFailClosedRuntimeControl(),
+  timestamp = serverTimestamp(),
+}) {
+  const buildRef = db.collection('projectBuilds').doc(buildId);
+  const buildSnap = await buildRef.get();
+  if (!buildSnap.exists) throw new Error('Build not found');
+  const build = buildSnap.data();
+  if (build.status === 'deleted') throw new Error('Deleted Build cannot be disabled');
+
+  try {
+    await runtimeControl.revoke({ projectId: build.projectId, buildId });
+  } finally {
+    const stateRef = db.collection('projectBuildState').doc(build.projectId);
+    const stateSnap = await stateRef.get();
+    const state = stateSnap.exists ? stateSnap.data() : {};
+    const stateUpdate = { updatedAt: timestamp };
+    if (state.publishedBuildId === buildId) stateUpdate.publishedBuildId = FieldValue.delete();
+    if (state.requestedBuildId === buildId) stateUpdate.requestedBuildId = FieldValue.delete();
+    await Promise.all([
+      buildRef.set({
+        status: 'disabled',
+        runtimeState: 'revoked',
+        moderationDisabled: true,
+        moderationDisableReason: String(reason || 'Moderator disabled build').slice(0, 500),
+        moderationDisabledBy: moderatorId,
+        moderationDisabledAt: timestamp,
+        reconcileNeeded: false,
+        updatedAt: timestamp,
+      }, { merge: true }),
+      stateRef.set(stateUpdate, { merge: true }),
+    ]);
+  }
+  return { buildId, projectId: build.projectId, status: 'disabled' };
+}
+
+export async function restoreHostedBuild({ buildId, moderatorId, db = getDb(), timestamp = serverTimestamp() }) {
+  const buildRef = db.collection('projectBuilds').doc(buildId);
+  const buildSnap = await buildRef.get();
+  if (!buildSnap.exists) throw new Error('Build not found');
+  const build = buildSnap.data();
+  if (build.status !== 'disabled' || build.moderationDisabled !== true) throw new Error('Build is not moderator-disabled');
+  await buildRef.set({
+    status: 'ready',
+    runtimeState: 'private',
+    moderationDisabled: false,
+    moderationDisableReason: FieldValue.delete(),
+    moderationDisabledBy: FieldValue.delete(),
+    moderationDisabledAt: FieldValue.delete(),
+    moderationRestoredBy: moderatorId,
+    moderationRestoredAt: timestamp,
+    reconcileNeeded: false,
+    updatedAt: timestamp,
+  }, { merge: true });
+  return { buildId, projectId: build.projectId, status: 'ready', runtimeState: 'private' };
+}
