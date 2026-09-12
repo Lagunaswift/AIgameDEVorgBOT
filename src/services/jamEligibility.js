@@ -1,9 +1,5 @@
 import { getDb, serverTimestamp } from '../firebase.js';
-import { jamSubmissionDocId } from '../lib/hostedBuilds.js';
-
-function hasAppliedTag(channel, tagId) {
-  return Boolean(tagId) && Array.isArray(channel?.appliedTags) && channel.appliedTags.includes(tagId);
-}
+import { jamEligibilityDecision, jamSubmissionDocId } from '../lib/hostedBuilds.js';
 
 export async function reconcileJamEligibilityForThread({
   channel,
@@ -26,12 +22,7 @@ export async function reconcileJamEligibilityForThread({
     const key = jamSubmissionDocId(jamDoc.id, thread.projectId);
     const submissionSnap = await db.collection('jamSubmissions').doc(key).get();
     const submission = submissionSnap.exists ? submissionSnap.data() : null;
-    const eligible = Boolean(submission)
-      && submission.state === 'submitted'
-      && submission.ownerId === thread.ownerId
-      && submission.projectId === thread.projectId
-      && submission.threadId === channel.id
-      && hasAppliedTag(channel, jam.submissionTagId);
+    const decision = jamEligibilityDecision({ thread, channel, jam, submission });
 
     const record = {
       jamId: jamDoc.id,
@@ -39,18 +30,12 @@ export async function reconcileJamEligibilityForThread({
       buildId: submission?.buildId ?? null,
       threadId: channel.id,
       ownerId: thread.ownerId,
-      eligible,
-      reason: eligible
-        ? 'eligible'
-        : !submission
-          ? 'no-submission'
-          : !hasAppliedTag(channel, jam.submissionTagId)
-            ? 'jam-tag-missing'
-            : 'submission-mismatch',
+      eligible: decision.eligible,
+      reason: decision.reason,
       updatedAt: timestamp,
     };
     await db.collection('jamEligibility').doc(key).set(record, { merge: false });
-    updates.push({ key, eligible, reason: record.reason, buildId: record.buildId });
+    updates.push({ key, eligible: decision.eligible, reason: decision.reason, buildId: record.buildId });
   }
   return { status: 'ok', updates };
 }
