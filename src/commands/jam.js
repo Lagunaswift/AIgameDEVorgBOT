@@ -1,5 +1,13 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { jamReviewQueue, jamStatus, lockQualifiedJamSubmissions, registerJam, setJamPhaseFromDiscord } from '../services/jams.js';
+import {
+  finishLockedJamSubmissions,
+  jamReviewQueue,
+  jamStatus,
+  lockQualifiedJamSubmissions,
+  registerJam,
+  setJamArchiveDisposition,
+  setJamPhaseFromDiscord,
+} from '../services/jams.js';
 import { reconcileAllActiveJamEligibility } from '../services/jamEligibility.js';
 
 const data = new SlashCommandBuilder()
@@ -33,7 +41,16 @@ const data = new SlashCommandBuilder()
     .setDescription('Show this Jam mirror and submission counts.'))
   .addSubcommand((sub) => sub
     .setName('review')
-    .setDescription('Show which Jam entries are ready or blocked and why.'));
+    .setDescription('Show which Jam entries are ready or blocked and why.'))
+  .addSubcommand((sub) => sub
+    .setName('archive')
+    .setDescription('Control one finished Jam entry after its hosted Build changes.')
+    .addStringOption((option) => option.setName('project_id').setDescription('Exact Project ID from the Jam review/status tools').setRequired(true))
+    .addStringOption((option) => option.setName('visibility').setDescription('Finished Jam archive behavior').setRequired(true).addChoices(
+      { name: 'Playable if Build remains public', value: 'playable' },
+      { name: 'Keep result but show Build removed', value: 'tombstone' },
+      { name: 'Suppress from public Jam archive', value: 'suppress' },
+    )));
 
 function currentJamThread(interaction) {
   const channel = interaction.channel;
@@ -50,6 +67,8 @@ export function createJamCommand(services = {
   registerJam,
   setJamPhaseFromDiscord,
   lockQualifiedJamSubmissions,
+  finishLockedJamSubmissions,
+  setJamArchiveDisposition,
   jamStatus,
   jamReviewQueue,
   reconcileAllActiveJamEligibility,
@@ -85,15 +104,18 @@ export function createJamCommand(services = {
 
         if (subcommand === 'phase') {
           const nextPhase = interaction.options.getString('phase', true);
-          if (nextPhase === 'voting') {
-            await services.reconcileAllActiveJamEligibility(interaction.client);
-          }
+          if (nextPhase === 'voting') await services.reconcileAllActiveJamEligibility(interaction.client);
           const jam = await services.setJamPhaseFromDiscord(thread, nextPhase);
           if (nextPhase === 'voting') {
             const results = await services.lockQualifiedJamSubmissions(thread.id);
             const locked = results.filter((item) => item.status === 'locked').length;
             const blocked = results.filter((item) => item.status === 'blocked').length;
             await interaction.editReply(`Discord Jam phase is now **VOTING**. Locked ${locked} qualified submission${locked === 1 ? '' : 's'}; ${blocked} blocked submission${blocked === 1 ? '' : 's'} need moderator review.`);
+            return;
+          }
+          if (nextPhase === 'finished') {
+            const finalized = await services.finishLockedJamSubmissions(thread.id);
+            await interaction.editReply(`Discord Jam phase is now **FINISHED**. Finalized ${finalized} locked submission${finalized === 1 ? '' : 's'} for the archive.`);
             return;
           }
           await interaction.editReply(`Discord Jam phase is now **${jam.phase.toUpperCase()}**.`);
@@ -117,6 +139,22 @@ export function createJamCommand(services = {
           return;
         }
 
+        if (subcommand === 'archive') {
+          const result = await services.setJamArchiveDisposition({
+            jamId: thread.id,
+            projectId: interaction.options.getString('project_id', true),
+            disposition: interaction.options.getString('visibility', true),
+            moderatorId: interaction.user.id,
+          });
+          const copy = {
+            playable: 'The archive will keep the entry playable only while its exact Build remains public.',
+            tombstone: 'The archive may keep the historical result but will not serve the removed Build.',
+            suppress: 'The entry is suppressed from the public Jam archive.',
+          }[result.disposition];
+          await interaction.editReply(`Updated Project \`${result.projectId}\` archive disposition to **${result.disposition.toUpperCase()}**. ${copy}`);
+          return;
+        }
+
         const status = await services.jamStatus(thread.id);
         if (!status) {
           await interaction.editReply('This thread is not registered as a Jam yet. Use `/jam setup`.');
@@ -130,6 +168,7 @@ export function createJamCommand(services = {
           `Entries: ${counts.total}`,
           `Submitted: ${counts.submitted}`,
           `Locked for voting: ${counts.locked}`,
+          `Finished archive entries: ${counts.finished}`,
           `Withdrawn: ${counts.withdrawn}`,
           `Disqualified: ${counts.disqualified}`,
           'Use `/jam review` for entry-level readiness and blockers.',
