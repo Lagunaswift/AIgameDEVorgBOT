@@ -1,5 +1,6 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { jamStatus, lockQualifiedJamSubmissions, registerJam, setJamPhaseFromDiscord } from '../services/jams.js';
+import { jamReviewQueue, jamStatus, lockQualifiedJamSubmissions, registerJam, setJamPhaseFromDiscord } from '../services/jams.js';
+import { reconcileAllActiveJamEligibility } from '../services/jamEligibility.js';
 
 const data = new SlashCommandBuilder()
   .setName('jam')
@@ -29,7 +30,10 @@ const data = new SlashCommandBuilder()
       )))
   .addSubcommand((sub) => sub
     .setName('status')
-    .setDescription('Show this Jam mirror and submission counts.'));
+    .setDescription('Show this Jam mirror and submission counts.'))
+  .addSubcommand((sub) => sub
+    .setName('review')
+    .setDescription('Show which Jam entries are ready or blocked and why.'));
 
 function currentJamThread(interaction) {
   const channel = interaction.channel;
@@ -37,7 +41,19 @@ function currentJamThread(interaction) {
   return channel;
 }
 
-export function createJamCommand(services = { registerJam, setJamPhaseFromDiscord, lockQualifiedJamSubmissions, jamStatus }) {
+function compact(value, max = 28) {
+  const text = String(value ?? '');
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+export function createJamCommand(services = {
+  registerJam,
+  setJamPhaseFromDiscord,
+  lockQualifiedJamSubmissions,
+  jamStatus,
+  jamReviewQueue,
+  reconcileAllActiveJamEligibility,
+}) {
   return {
     data,
     async execute(interaction) {
@@ -69,6 +85,9 @@ export function createJamCommand(services = { registerJam, setJamPhaseFromDiscor
 
         if (subcommand === 'phase') {
           const nextPhase = interaction.options.getString('phase', true);
+          if (nextPhase === 'voting') {
+            await services.reconcileAllActiveJamEligibility(interaction.client);
+          }
           const jam = await services.setJamPhaseFromDiscord(thread, nextPhase);
           if (nextPhase === 'voting') {
             const results = await services.lockQualifiedJamSubmissions(thread.id);
@@ -78,6 +97,23 @@ export function createJamCommand(services = { registerJam, setJamPhaseFromDiscor
             return;
           }
           await interaction.editReply(`Discord Jam phase is now **${jam.phase.toUpperCase()}**.`);
+          return;
+        }
+
+        if (subcommand === 'review') {
+          const review = await services.jamReviewQueue(thread.id);
+          const lines = [
+            `**${review.jam.title} review**`,
+            `Ready: ${review.counts.ready} | Blocked: ${review.counts.blocked} | Locked: ${review.counts.locked} | Excluded: ${review.counts.excluded}`,
+          ];
+          const actionable = review.entries.filter((entry) => entry.status === 'blocked' || entry.status === 'ready').slice(0, 12);
+          for (const entry of actionable) {
+            const reason = entry.reasons.length ? entry.reasons.join(', ') : 'ready';
+            lines.push(`• **${entry.status.toUpperCase()}** Project \`${compact(entry.projectId)}\` | Build \`${compact(entry.buildId)}\` | ${reason}`);
+          }
+          if (!actionable.length) lines.push('No submitted entries currently need review.');
+          if (review.entries.length > actionable.length) lines.push(`Showing ${actionable.length} of ${review.entries.length} entries. Use /jam status for totals.`);
+          await interaction.editReply(lines.join('\n'));
           return;
         }
 
@@ -96,6 +132,7 @@ export function createJamCommand(services = { registerJam, setJamPhaseFromDiscor
           `Locked for voting: ${counts.locked}`,
           `Withdrawn: ${counts.withdrawn}`,
           `Disqualified: ${counts.disqualified}`,
+          'Use `/jam review` for entry-level readiness and blockers.',
         ].join('\n'));
       } catch (error) {
         await interaction.editReply(`Jam action failed: ${error.message}`);
