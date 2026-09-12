@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  discordJamPhaseDecision,
   jamEligibilityDecision,
   jamSubmissionDocId,
   phaseTransitionAllowed,
@@ -45,8 +46,21 @@ test('Jam eligibility requires the exact registered thread, exact submission and
 
   assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission }), { eligible: true, reason: 'eligible' });
   assert.deepEqual(jamEligibilityDecision({ thread, channel: { ...channel, appliedTags: [] }, jam, submission }), { eligible: false, reason: 'jam-tag-missing' });
-  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission: { ...submission, buildId: 'build_other', threadId: '1539971669467332000' } }), { eligible: false, reason: 'submission-mismatch' });
+  assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission: { ...submission, threadId: '1539971669467332000' } }), { eligible: false, reason: 'submission-mismatch' });
   assert.deepEqual(jamEligibilityDecision({ thread, channel, jam, submission: null }), { eligible: false, reason: 'no-submission' });
+});
+
+test('Discord lifecycle tags map to one exact Jam phase and reject ambiguous state', () => {
+  const config = {
+    activeTagId: '1111111111111111111',
+    votingTagId: '2222222222222222222',
+    finishedTagId: '3333333333333333333',
+  };
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [], ...config }), { phase: 'upcoming', reason: 'no-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.activeTagId], ...config }), { phase: 'active', reason: 'exact-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.votingTagId], ...config }), { phase: 'voting', reason: 'exact-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.finishedTagId], ...config }), { phase: 'finished', reason: 'exact-lifecycle-tag' });
+  assert.deepEqual(discordJamPhaseDecision({ appliedTags: [config.activeTagId, config.votingTagId], ...config }), { phase: null, reason: 'multiple-lifecycle-tags' });
 });
 
 test('jam phase and submission state transitions are forward-only', () => {
