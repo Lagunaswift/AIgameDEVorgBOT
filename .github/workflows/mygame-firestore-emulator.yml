@@ -11,15 +11,12 @@ concurrency:
   group: mygame-firestore-emulator-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  # Deterministic public fixture used by existing Showcase exporter regression tests.
-  # This is not a Discord credential.
-  GUILD_ID: '1051088980176805919'
-
 jobs:
   firestore-emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GUILD_ID: '1051088980176805919'
     steps:
       - name: Checkout bot without credentials
         uses: actions/checkout@v4
@@ -33,7 +30,7 @@ jobs:
           cache: npm
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'

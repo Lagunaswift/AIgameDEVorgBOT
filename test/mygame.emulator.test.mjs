@@ -24,11 +24,12 @@ test('createAndPublishProjectForThread against the Firestore emulator', {
 }, async (t) => {
   safeEmulatorConfig();
 
-  const admin = (await import('firebase-admin')).default;
+  const { deleteApp, initializeApp } = await import('firebase-admin/app');
+  const { getFirestore } = await import('firebase-admin/firestore');
   const { createAndPublishProjectForThread, setProjectPublication } = await import('../src/services/projects.js');
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const app = admin.initializeApp({ projectId }, `mygame-emulator-demo-${runId}`);
-  const db = app.firestore();
+  const app = initializeApp({ projectId }, `mygame-emulator-demo-${runId}`);
+  const db = getFirestore(app);
   db.settings({ ignoreUndefinedProperties: true });
   const refs = [];
 
@@ -59,7 +60,7 @@ test('createAndPublishProjectForThread against the Firestore emulator', {
     try {
       await Promise.all(refs.map((ref) => ref.delete()));
     } finally {
-      await app.delete();
+      await deleteApp(app);
     }
   });
 
