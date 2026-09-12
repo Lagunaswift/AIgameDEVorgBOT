@@ -1,5 +1,5 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { jamStatus, lockQualifiedJamSubmissions, registerJam, setJamPhase } from '../services/jams.js';
+import { jamStatus, lockQualifiedJamSubmissions, registerJam, setJamPhaseFromDiscord } from '../services/jams.js';
 
 const data = new SlashCommandBuilder()
   .setName('jam')
@@ -8,13 +8,16 @@ const data = new SlashCommandBuilder()
   .addSubcommand((sub) => sub
     .setName('setup')
     .setDescription('Register this Discord thread as a Jam.')
-    .addStringOption((option) => option.setName('submission_tag_id').setDescription('Discord tag ID used for Jam entries').setRequired(true))
+    .addStringOption((option) => option.setName('submission_tag_id').setDescription('Discord tag ID used on game threads for Jam entry').setRequired(true))
     .addStringOption((option) => option.setName('submissions_forum_id').setDescription('Discord forum ID containing Jam submissions').setRequired(true))
+    .addStringOption((option) => option.setName('active_tag_id').setDescription('Lifecycle tag ID for Active').setRequired(true))
+    .addStringOption((option) => option.setName('voting_tag_id').setDescription('Lifecycle tag ID for Voting').setRequired(true))
+    .addStringOption((option) => option.setName('finished_tag_id').setDescription('Lifecycle tag ID for Finished').setRequired(true))
     .addStringOption((option) => option.setName('title').setDescription('Public Jam title; defaults to this thread title').setRequired(false))
     .addStringOption((option) => option.setName('summary').setDescription('Short public Jam summary').setRequired(false)))
   .addSubcommand((sub) => sub
     .setName('phase')
-    .setDescription('Move this registered Jam to its next phase.')
+    .setDescription('Move this registered Jam to its next Discord lifecycle phase.')
     .addStringOption((option) => option
       .setName('phase')
       .setDescription('Next Jam phase')
@@ -34,7 +37,7 @@ function currentJamThread(interaction) {
   return channel;
 }
 
-export function createJamCommand(services = { registerJam, setJamPhase, lockQualifiedJamSubmissions, jamStatus }) {
+export function createJamCommand(services = { registerJam, setJamPhaseFromDiscord, lockQualifiedJamSubmissions, jamStatus }) {
   return {
     data,
     async execute(interaction) {
@@ -54,24 +57,27 @@ export function createJamCommand(services = { registerJam, setJamPhase, lockQual
             submissionTagId: interaction.options.getString('submission_tag_id', true),
             eventsForumId: thread.parentId,
             submissionsForumId: interaction.options.getString('submissions_forum_id', true),
+            activeTagId: interaction.options.getString('active_tag_id', true),
+            votingTagId: interaction.options.getString('voting_tag_id', true),
+            finishedTagId: interaction.options.getString('finished_tag_id', true),
             title: interaction.options.getString('title') || thread.name,
             summary: interaction.options.getString('summary'),
           });
-          await interaction.editReply(`Registered **${jam.title}**. Phase: **UPCOMING**. No public Jam entries bypass the Publish to site moderation gate.`);
+          await interaction.editReply(`Registered **${jam.title}**. Phase: **UPCOMING**. Discord lifecycle tags are now the phase authority; public entries still require Publish to site approval.`);
           return;
         }
 
         if (subcommand === 'phase') {
           const nextPhase = interaction.options.getString('phase', true);
-          const jam = await services.setJamPhase(thread.id, nextPhase);
+          const jam = await services.setJamPhaseFromDiscord(thread, nextPhase);
           if (nextPhase === 'voting') {
             const results = await services.lockQualifiedJamSubmissions(thread.id);
             const locked = results.filter((item) => item.status === 'locked').length;
             const blocked = results.filter((item) => item.status === 'blocked').length;
-            await interaction.editReply(`Jam moved to **VOTING**. Locked ${locked} qualified submission${locked === 1 ? '' : 's'}; ${blocked} blocked submission${blocked === 1 ? '' : 's'} need moderator review.`);
+            await interaction.editReply(`Discord Jam phase is now **VOTING**. Locked ${locked} qualified submission${locked === 1 ? '' : 's'}; ${blocked} blocked submission${blocked === 1 ? '' : 's'} need moderator review.`);
             return;
           }
-          await interaction.editReply(`Jam moved to **${jam.phase.toUpperCase()}**.`);
+          await interaction.editReply(`Discord Jam phase is now **${jam.phase.toUpperCase()}**.`);
           return;
         }
 
@@ -80,10 +86,11 @@ export function createJamCommand(services = { registerJam, setJamPhase, lockQual
           await interaction.editReply('This thread is not registered as a Jam yet. Use `/jam setup`.');
           return;
         }
-        const { jam, counts } = status;
+        const { jam, discordConfig, counts } = status;
         await interaction.editReply([
           `**${jam.title}**`,
           `Phase: **${String(jam.phase).toUpperCase()}**`,
+          `Discord lifecycle: ${discordConfig ? 'Configured' : 'Needs setup repair'}`,
           `Entries: ${counts.total}`,
           `Submitted: ${counts.submitted}`,
           `Locked for voting: ${counts.locked}`,
