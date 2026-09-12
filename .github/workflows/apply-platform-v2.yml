@@ -1,0 +1,48 @@
+name: Apply and verify Project destination patch
+
+on:
+  push:
+    branches: [feat/platform-v2-project-destinations]
+    paths: [.github/workflows/apply-platform-v2.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify reviewed patch and apply without overwriting conflicts
+        run: |
+          test "$GITHUB_REPOSITORY" = Lagunaswift/AIgameDEVorgBOT
+          test "$GITHUB_REF" = refs/heads/feat/platform-v2-project-destinations
+          echo '340e9e27d8809eb76a68c65f33e3d6cb17fd2d95a1f82e980c3539b87d5007db  .github/platform-v2.patch' | sha256sum --check
+          git apply --check .github/platform-v2.patch
+          git apply --index .github/platform-v2.patch
+          git rm .github/platform-v2.patch .github/platform-v2.patch.b64 .github/workflows/apply-platform-v2.yml
+          git diff --cached --check
+      - run: npm ci
+      - name: Run Bot regression tests without deployment credentials
+        env:
+          GUILD_ID: '1051088980176805919'
+        run: npm test
+      - name: Commit tested changes to this feature branch only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/feat/platform-v2-project-destinations
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Make approved Projects authoritative for playable links'
+          auth=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin "HEAD:$GITHUB_REF_NAME"
+          git rev-parse HEAD
