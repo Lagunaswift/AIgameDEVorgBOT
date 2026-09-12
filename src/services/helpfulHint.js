@@ -33,8 +33,8 @@ export function buildHelpfulHintMessage({ emoji, threadName, welcome = false }) 
 
   return `${opening}\n\n` +
     `When feedback helps, react to the comment with ${emoji}. Eligible comments earn a feedback ` +
-    `point under the server's length and cap rules. As the thread owner, use **/projecturl** here to save the playable URL. This does ` +
-    `not publish or create a Project page. The **Publish to site** forum tag controls this ` +
+    `point under the server's length and cap rules. Use **/mygame manage** in your existing game thread to edit your Project and its playable links. ` +
+    `No Project yet? Ask a moderator to review the game, then use **/mygame publish** with a status. The **Publish to site** forum tag controls this ` +
     `thread's Showcase listing. Without that tag, it stays out of Showcase. Project publication is a separate setting.`;
 }
 

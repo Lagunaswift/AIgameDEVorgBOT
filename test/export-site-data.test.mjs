@@ -228,3 +228,21 @@ test('Showcase does not silently clear an image when reply history is unavailabl
     threadId: THREAD, forumId: FORUM, ownerId: OWNER, mode: 'showcase',
   }), ctx({ rest })), /history forbidden/);
 });
+
+test('linked Showcase destination comes from approved Project data, not stale Thread metadata', async () => {
+  const makeProject=(project)=>new Map([['project-1',{id:'project-1',data:{projectId:'project-1',ownerId:OWNER,publishToSite:true},prepared:{id:'project-1',ownerId:OWNER,profileThreadId:THREAD,project:{slug:'guild-game',status:'playable',links:[],...project}}}]]);
+  const thread=docSnap({threadId:THREAD,forumId:FORUM,ownerId:OWNER,mode:'showcase',projectId:'project-1',projectUrl:'https://example.com/old'});
+  const current=await processShowcaseThread(thread,ctx({projectsById:makeProject({projectUrl:'https://example.com/current'}),exportedProjectIds:new Set(['project-1'])}));
+  assert.equal(current.game.projectUrl,'https://example.com/current');
+  const removed=await processShowcaseThread(thread,ctx({projectsById:makeProject({projectUrl:null}),exportedProjectIds:new Set(['project-1'])}));
+  assert.equal(removed.game.projectUrl,null);
+  const structured=await processShowcaseThread(thread,ctx({projectsById:makeProject({projectUrl:'https://example.com/site',links:[{type:'play',url:'https://example.com/play',priority:1}]}),exportedProjectIds:new Set(['project-1'])}));
+  assert.equal(structured.game.projectUrl,'https://example.com/play');
+});
+
+test('owner-unpublished Project does not leak its destination or resurrect old Thread URL', async () => {
+  const projectsById=new Map([['project-1',{id:'project-1',data:{projectId:'project-1',ownerId:OWNER,publishToSite:false,projectUrl:'https://private.example'},prepared:null}]]);
+  const result=await processShowcaseThread(docSnap({threadId:THREAD,forumId:FORUM,ownerId:OWNER,mode:'showcase',projectId:'project-1',projectUrl:'https://old.example'}),ctx({projectsById,exportedProjectIds:new Set()}));
+  assert.equal(result.game.projectUrl,null);
+  assert.equal(result.game.projectId,null);
+});

@@ -21,6 +21,14 @@ export function mayRunHostedModeratorCommand(interaction, expectedGuildId = conf
 export async function execute(interaction) {
   if (!interaction.isChatInputCommand()) return;
 
+  // Old Discord clients may still send the retired command. Never run a stale writer.
+  if (interaction.commandName === 'projecturl') {
+    try {
+      await interaction.reply({ content: 'The /projecturl command is retired. Use /mygame manage in your existing game thread, then edit Platforms & destinations. No Project yet? Ask a moderator to review the game, then use /mygame publish with a status.', ephemeral: true });
+    } catch { /* Expired interactions must not restart a retired mutation. */ }
+    return;
+  }
+
   // Slash-command visibility settings are not a substitute for server-side authority.
   if (HOSTED_MODERATOR_COMMANDS.has(interaction.commandName) && !mayRunHostedModeratorCommand(interaction)) {
     await interaction.reply({ content: 'This action requires an authorised AIGAMEDEV moderator.', ephemeral: true });

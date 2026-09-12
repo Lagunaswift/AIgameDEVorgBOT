@@ -8,6 +8,7 @@
 // Usage:
 //   node scripts/export-site-data.mjs --out ../AIGAMEDEVSITE --report ./export-report.json [--jams-forum <id[,id...]>] [--limit N] [--dry-run]
 
+import { projectDestination } from '../src/lib/projectDestination.js';
 import 'dotenv/config';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -564,7 +565,7 @@ function resolveShowcaseProjectFields(data, channel, threadId, projectsById, exp
   // Owner intent alone never creates a public Project link. A Project that was
   // withheld by the live moderation gate must not leave a dangling id or slug.
   if (!record.prepared || record.data.publishToSite !== true || !exportedProjectIds.has(record.id)) {
-    return { activityTitle, projectId: null, projectSlug: null, state: null };
+    return { activityTitle, projectId: null, projectSlug: null, state: null, projectUrl: null };
   }
   if (record.prepared.profileThreadId !== threadId) {
     throw new Error(`showcase thread ${threadId} is not Project ${data.projectId}'s fixed source thread`);
@@ -583,6 +584,7 @@ function resolveShowcaseProjectFields(data, channel, threadId, projectsById, exp
     activityTitle,
     projectId: record.id,
     projectSlug: record.prepared.project.slug,
+    projectUrl: projectDestination(record.prepared.project),
     state: archived ? 'archived' : 'open',
   };
 }

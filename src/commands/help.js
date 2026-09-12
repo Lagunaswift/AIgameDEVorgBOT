@@ -5,7 +5,6 @@ const COMMUNITY_COMMANDS = [
   ['`/leaderboard`', 'View the feedback leaderboard (weekly or all-time).'],
   ['`/needsreviews`', 'Find showcase posts that need more feedback.'],
   ['`/mygame publish`', 'Owner: request publication for this moderator-approved game thread.'],
-  ['`/projecturl`', 'Owner: save the playable URL for this thread. It does not publish a Project page.'],
   ['`/posttemplate`', 'Get a copyable template for build-help, playtest, or update posts.'],
   ['`/gameidea`', 'Ask Byte for a random game idea.'],
   ['`/help`', 'Show this command list.'],
