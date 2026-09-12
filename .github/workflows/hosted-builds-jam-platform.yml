@@ -12,12 +12,18 @@ on:
       - 'src/events/threadUpdate.js'
       - 'src/commands/jam.js'
       - 'src/commands/build.js'
+      - 'scripts/hosted-builds-export.mjs'
       - 'test/hosted-builds*.test.mjs'
       - 'docs/hosted-builds-bot-plan.md'
       - '.github/workflows/hosted-builds-jam-platform.yml'
 
 permissions:
   contents: read
+
+env:
+  # Existing exporter regression tests use this deterministic fixture guild ID.
+  # It is not a production Discord credential.
+  GUILD_ID: '1051088980176805919'
 
 jobs:
   test:
