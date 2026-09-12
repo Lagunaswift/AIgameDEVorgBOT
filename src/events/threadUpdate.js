@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { config } from '../config.js';
 import { reconcileHostedBuildsForThread } from '../services/hostedBuilds.js';
 import { reconcileJamEligibilityForThread } from '../services/jamEligibility.js';
+import { reconcileJamPhaseFromThread } from '../services/jams.js';
 
 export const name = Events.ThreadUpdate;
 export const once = false;
@@ -32,6 +33,11 @@ export async function execute(oldThread, newThread) {
     }
 
     if (tagsChanged(oldThread, newThread)) {
+      const phase = await reconcileJamPhaseFromThread(newThread);
+      if (phase.status === 'updated' || phase.status === 'invalid-tags' || phase.status === 'blocked-transition') {
+        console.log(`[threadUpdate] jam phase thread=${newThread.id} status=${phase.status}${phase.phase ? ` phase=${phase.phase}` : ''}`);
+      }
+
       const eligibility = await reconcileJamEligibilityForThread({ channel: newThread });
       if (eligibility.status === 'ok' && eligibility.updates.length) {
         console.log(`[threadUpdate] jam eligibility thread=${newThread.id} updates=${eligibility.updates.length}`);
