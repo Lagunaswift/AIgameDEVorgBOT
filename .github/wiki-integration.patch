@@ -1,0 +1,59 @@
+diff --git a/.github/workflows/export-site.yml b/.github/workflows/export-site.yml
+index e40bb4e..931a9b8 100644
+--- a/.github/workflows/export-site.yml
++++ b/.github/workflows/export-site.yml
+@@ -22,6 +22,8 @@ on:
+     paths:
+       - scripts/project-publishing-export.mjs
+       - src/lib/project-publishing/**
++      - scripts/project-wiki-export.mjs
++      - src/lib/project-wiki/**
+       - .github/workflows/export-site.yml
+ 
+ concurrency:
+@@ -84,6 +86,7 @@ jobs:
+           mkdir -p site/src/data site/public/assets/showcase site/public/assets/awards site/public/assets/projects
+           cp site-staging/src/data/projects.json site/src/data/projects.json
+           cp site-staging/src/data/project-publishing.json site/src/data/project-publishing.json
++          cp site-staging/src/data/project-wiki.json site/src/data/project-wiki.json
+           cp site-staging/src/data/showcase.json site/src/data/showcase.json
+           cp site-staging/src/data/jams.json site/src/data/jams.json
+           cp site-staging/src/data/builds.json site/src/data/builds.json
+@@ -100,7 +103,7 @@ jobs:
+         run: |
+           git config user.name "Lagunaswift"
+           git config user.email "jamesswift1988@gmail.com"
+-          git add src/data/projects.json src/data/project-publishing.json src/data/showcase.json src/data/jams.json src/data/builds.json public/assets/projects public/assets/showcase public/assets/awards
++          git add src/data/projects.json src/data/project-publishing.json src/data/project-wiki.json src/data/showcase.json src/data/jams.json src/data/builds.json public/assets/projects public/assets/showcase public/assets/awards
+           if git diff --cached --quiet; then
+             echo "No data changes this run."
+           else
+ diff --git a/scripts/export-site-data.mjs b/scripts/export-site-data.mjs
+index 69f7260..25f5e41 100644
+--- a/scripts/export-site-data.mjs
++++ b/scripts/export-site-data.mjs
+@@ -18,6 +18,7 @@ import { initFirebase, getDb } from '../src/firebase.js';
+ import { findOwnerReplyImage } from '../src/lib/threadImages.js';
+ import { checkGameApproval } from '../src/lib/gameApproval.js';
+ import { readProjectPublishing } from './project-publishing-export.mjs';
++import { readProjectWikis } from './project-wiki-export.mjs';
+ import {
+   parsePublishTagId,
+   preserveGeneratedAtIfUnchanged,
+@@ -966,6 +967,8 @@ async function main() {
+ 
+   const publishing = await readProjectPublishing({ db, projects, generatedAt: new Date().toISOString() });
+ 
++  const wikis = await readProjectWikis({ db, projects, generatedAt: new Date().toISOString() });
++
+   // Finish every external read and contract transformation before replacing any JSON
+   // snapshot. Each file is then written via a same-directory temp file and atomic rename;
+   // the workflow's staging clone is the all-files promotion boundary.
+@@ -981,6 +984,7 @@ async function main() {
+     await writeReport(args.report, { version: 1, withheldIds, withheldProjectIds, unpublishedProjectIds });
+     filesWritten.push(args.report);
+     filesWritten.push(await writeJson(args.out, 'project-publishing.json', publishing));
++    filesWritten.push(await writeJson(args.out, 'project-wiki.json', wikis));
+     filesWritten.push(await writeJson(args.out, 'projects.json', {
+       version: 1,
+       generatedAt,
