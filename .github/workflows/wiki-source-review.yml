@@ -1,0 +1,22 @@
+name: Wiki source review
+on:
+  push:
+    branches: [feat/project-wiki-v2-3]
+    paths: [.github/workflows/wiki-source-review.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: git archive --format=tar HEAD > source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wiki-source-review
+          path: source.tar
+          retention-days: 1
+          if-no-files-found: error
