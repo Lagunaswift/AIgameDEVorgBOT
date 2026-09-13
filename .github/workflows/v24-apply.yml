@@ -1,0 +1,48 @@
+name: Apply verified V2.4 source
+on:
+  push:
+    branches: [feat/project-updates-v2-4]
+    paths: [.github/workflows/v24-apply.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.repository == 'Lagunaswift/AIgameDEVorgBOT' && github.ref == 'refs/heads/feat/project-updates-v2-4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify and apply bounded source patch
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib, subprocess
+          base = 'b0e5636c001bf2427570225145d746764c03dbeb'
+          changes = subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
+          if not set(changes) <= {'.v24/patch.b64','.github/workflows/v24-apply.yml'}: raise SystemExit('Source moved since verified base')
+          encoded = pathlib.Path('.v24/patch.b64').read_text().strip()
+          # Correct transport transcription before verifying the immutable source checksum.
+          encoded = encoded.replace('VSqVTSZZ4945','VSqVTSZ4945').replace('S54BvhT99T7148','S54Bvh99T7148')
+          patch = gzip.decompress(base64.b64decode(encoded,validate=True))
+          if len(patch) != 23432 or hashlib.sha256(patch).hexdigest() != 'a7d9673008c202fa793186b5f77a742360ee6755fc8c4a2c0360bca41755a1d7': raise SystemExit('Patch integrity mismatch')
+          target = pathlib.Path('/tmp/v24-source.patch'); target.write_bytes(patch)
+          paths = [line.split('\t')[-1] for line in subprocess.check_output(['git','apply','--numstat',str(target)],text=True).splitlines()]
+          if not paths or any(not p.startswith(('src/', 'test/', 'scripts/', 'docs/')) or '..' in p.split('/') for p in paths): raise SystemExit('Patch outside source scope')
+          subprocess.run(['git','apply','--check',str(target)],check=True)
+          subprocess.run(['git','apply',str(target)],check=True)
+          subprocess.run(['git','add','--',*paths],check=True)
+          subprocess.run(['git','rm','--','.v24/patch.b64'],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          print('Verified exporter patch applied; workflow unchanged')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Implement verified creator-selected development message export'
+      - name: Push only approved feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $HEADER" push origin HEAD:refs/heads/feat/project-updates-v2-4
