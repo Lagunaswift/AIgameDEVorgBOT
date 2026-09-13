@@ -18,6 +18,8 @@ import { initFirebase, getDb } from '../src/firebase.js';
 import { findOwnerReplyImage } from '../src/lib/threadImages.js';
 import { checkGameApproval } from '../src/lib/gameApproval.js';
 import { readProjectPublishing } from './project-publishing-export.mjs';
+import { MEDIA_COLLECTION, mediaState } from '../src/lib/project-media-contracts.mjs';
+import { buildSelectedGallery } from './selected-project-media.mjs';
 import {
   parsePublishTagId,
   preserveGeneratedAtIfUnchanged,
@@ -468,7 +470,7 @@ export async function runProjectsFlow(
   db,
   preparedProjects,
   args,
-  { downloadAttachment = downloadOptimizedAttachment } = {},
+  { downloadAttachment = downloadOptimizedAttachment, selectedImageFetch = fetch } = {},
 ) {
   const threadsSnap = await db.collection('threads').get();
   const threadDocs = threadsSnap.docs || [];
@@ -493,6 +495,11 @@ export async function runProjectsFlow(
       continue;
     }
     channelCache.set(source.threadId, approval.channel);
+    // Do not enumerate private media. Read only this already-approved Project.
+    const mediaSnap = await db.collection(MEDIA_COLLECTION).doc(prepared.id).get();
+    if (mediaSnap.exists && mediaSnap.id !== prepared.id) throw new Error('Gallery document identity mismatch.');
+    const selection = mediaState(mediaSnap.exists ? mediaSnap.data() : undefined, prepared.id, prepared.profileThreadId);
+    if (!selection) throw new Error('Saved gallery is malformed or belongs to another source. Export stopped.');
 
     let hero = null;
     const result = await buildProjectImage({
@@ -511,7 +518,12 @@ export async function runProjectsFlow(
     if (result.asset) generatedAssets.push(result.asset);
 
     const media = [];
-    for (const [index, threadId] of prepared.mediaThreadIds.entries()) {
+    if (selection.mode === 'selected') {
+      const selected = await buildSelectedGallery({ rest, selection, prepared, out: args.out, dryRun: args.dryRun, fetchImpl: selectedImageFetch });
+      media.push(...selected.media); generatedAssets.push(...selected.generatedAssets);
+      if (selected.omitted) console.warn(`[export] ${selected.omitted} selected gallery image(s) withheld after source/format checks`);
+    }
+    for (const [index, threadId] of (selection.mode === 'automatic' ? prepared.mediaThreadIds : []).entries()) {
       const result = await buildProjectImage({
         rest,
         threadDocsById,

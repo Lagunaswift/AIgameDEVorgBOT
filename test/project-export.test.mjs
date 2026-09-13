@@ -162,7 +162,7 @@ test('Project flow builds media only from its approved fixed source thread', asy
   t.after(() => { config.guildId = previousGuild; });
 
   const docs = [threadDoc(PROFILE, { purpose: 'project-update', publishOnProject: false })];
-  const db = { collection: () => ({ get: async () => ({ docs }) }) };
+  const db = { collection: () => ({ get: async () => ({ docs }), doc: (id) => ({ get: async () => ({ id, exists: false }) }) }) };
   const rest = {
     async get(url) {
       const channelMatch = /^\/channels\/(\d+)$/.exec(url);
@@ -234,7 +234,7 @@ test('Project media uses the real optimizer and records output dimensions', asyn
     create: { width: 4, height: 3, channels: 3, background: '#ff6600' },
   }).png().toBuffer();
   const docs = [threadDoc(PROFILE, { publishOnProject: false })];
-  const db = { collection: () => ({ get: async () => ({ docs }) }) };
+  const db = { collection: () => ({ get: async () => ({ docs }), doc: (id) => ({ get: async () => ({ id, exists: false }) }) }) };
   const rest = {
     async get(url) {
       if (url === `/channels/${PROFILE}`) {
@@ -326,7 +326,7 @@ test('Project moderation withdrawal avoids media reads, reapproval restores expo
   config.guildId = GUILD;
   t.after(() => { config.guildId = previousGuild; });
   const docs = [threadDoc(PROFILE, { publishOnProject: false })];
-  const db = { collection: () => ({ get: async () => ({ docs }) }) };
+  const db = { collection: () => ({ get: async () => ({ docs }), doc: (id) => ({ get: async () => ({ id, exists: false }) }) }) };
   let approved = false;
   const calls = [];
   const rest = { async get(url) {
@@ -362,7 +362,7 @@ test('Project hero uses the owners reply attachment when the first post has no i
   config.guildId = GUILD;
   t.after(() => { config.guildId = previousGuild; });
   const docs = [threadDoc(PROFILE, { publishOnProject: false })];
-  const db = { collection: () => ({ get: async () => ({ docs }) }) };
+  const db = { collection: () => ({ get: async () => ({ docs }), doc: (id) => ({ get: async () => ({ id, exists: false }) }) }) };
   const rest = { async get(url) {
     if (url === `/channels/${PROFILE}`) return {
       id: PROFILE, guild_id: GUILD, parent_id: FORUM, owner_id: OWNER, type: 11, name: 'Game thread', applied_tags: [PUBLISH_TAG],
