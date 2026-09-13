@@ -20,6 +20,7 @@ import { checkGameApproval } from '../src/lib/gameApproval.js';
 import { readProjectPublishing } from './project-publishing-export.mjs';
 import { MEDIA_COLLECTION, mediaState } from '../src/lib/project-media-contracts.mjs';
 import { buildSelectedGallery } from './selected-project-media.mjs';
+import { readSelectedUpdates } from './selected-project-updates.mjs';
 import {
   parsePublishTagId,
   preserveGeneratedAtIfUnchanged,
@@ -554,6 +555,14 @@ export async function runProjectsFlow(
         url: `https://discord.com/channels/${config.guildId}/${source.threadId}`,
       }, `Project ${prepared.id} fixed source activity`));
     }
+    const updates = await readSelectedUpdates({ rest, db, prepared, guildId: config.guildId });
+    // An exact manually curated activity URL wins over a selected copy. Do not
+    // duplicate the same message, override manual content or infer related URLs.
+    const usedUrls = new Set([...prepared.project.activities, ...derivedActivities].map((entry) => entry.url));
+    for (const activity of updates.activities) {
+      if (!usedUrls.has(activity.url)) { derivedActivities.push(activity); usedUrls.add(activity.url); }
+    }
+    if (updates.omitted) console.warn(`[export] ${updates.omitted} selected development update(s) withheld after source/text checks`);
     projects.push(finalizeProjectExport(prepared, { hero, media, derivedActivities }));
     exportedProjectIds.add(prepared.id);
   }
