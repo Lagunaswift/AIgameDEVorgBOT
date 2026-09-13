@@ -18,6 +18,7 @@ import { initFirebase, getDb } from '../src/firebase.js';
 import { findOwnerReplyImage } from '../src/lib/threadImages.js';
 import { checkGameApproval } from '../src/lib/gameApproval.js';
 import { readProjectPublishing } from './project-publishing-export.mjs';
+import { readProjectWikis } from './project-wiki-export.mjs';
 import {
   parsePublishTagId,
   preserveGeneratedAtIfUnchanged,
@@ -966,6 +967,8 @@ async function main() {
 
   const publishing = await readProjectPublishing({ db, projects, generatedAt: new Date().toISOString() });
 
+  const wikis = await readProjectWikis({ db, projects, generatedAt: new Date().toISOString() });
+
   // Finish every external read and contract transformation before replacing any JSON
   // snapshot. Each file is then written via a same-directory temp file and atomic rename;
   // the workflow's staging clone is the all-files promotion boundary.
@@ -981,6 +984,7 @@ async function main() {
     await writeReport(args.report, { version: 1, withheldIds, withheldProjectIds, unpublishedProjectIds });
     filesWritten.push(args.report);
     filesWritten.push(await writeJson(args.out, 'project-publishing.json', publishing));
+    filesWritten.push(await writeJson(args.out, 'project-wiki.json', wikis));
     filesWritten.push(await writeJson(args.out, 'projects.json', {
       version: 1,
       generatedAt,
