@@ -21,6 +21,7 @@ function fixture(selection={version:1,projectId:'gallery-project',threadId:T,rev
  const source={id:T,data:()=>({threadId:T,forumId:F,ownerId:O,projectId:'gallery-project',mode:'showcase'})};
  const db={collection:name=>{
   if(name==='threads')return{get:async()=>({docs:[source]})};
+  if(name==='projectUpdates')return{doc:id=>({get:async()=>({id,exists:false})})};
   assert.equal(name,'projectMedia');return{doc:id=>({get:async()=>{reads.push(id);return{id,exists:selection!==undefined,data:()=>selection};}})};
  }};
  const rest={get:async url=>{calls.push(url);
