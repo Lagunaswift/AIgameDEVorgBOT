@@ -33,9 +33,13 @@ export function buildHelpfulHintMessage({ emoji, threadName, welcome = false }) 
 
   return `${opening}\n\n` +
     `When feedback helps, react to the comment with ${emoji}. Eligible comments earn a feedback ` +
-    `point under the server's length and cap rules. As the thread owner, use **/projecturl** here to save the playable URL. This does ` +
-    `not publish or create a Project page. The **Publish to site** forum tag controls this ` +
-    `thread's Showcase listing. Without that tag, it stays out of Showcase. Project publication is a separate setting.`;
+    `point under the server's length and cap rules. Keep one thread per game.\n\n` +
+    `Ask a moderator for a website review. Only a moderator can apply **Publish to site**. ` +
+    `After approval, use **/mygame publish** in this thread to create its Project. ` +
+    `Use **/mygame manage** in the same thread to open the website editor. ` +
+    `Saved drafts stay private; public pages still need approval and your publication request.\n\n` +
+    `Before a Project exists, **/projecturl** can save an external playable link on this thread. ` +
+    `Once a Project exists, edit its destinations on the website. Uploading browser-game ZIPs is not available yet.`;
 }
 
 async function sendHelpfulHint({ channel, client, authorId, welcome = false }) {

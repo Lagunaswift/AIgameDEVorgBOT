@@ -41,6 +41,10 @@ export const config = {
   watchedShowcaseForumIds: parseIdList(process.env.WATCHED_SHOWCASE_FORUM_IDS),
   watchedCompetitionForumIds: parseIdList(process.env.WATCHED_COMPETITION_FORUM_IDS),
 
+  // Sharing-only tags suppress feedback prompts/discovery, not site approval.
+  excludedTagNames: parseIdList(process.env.EXCLUDED_TAG_NAMES ?? 'just-sharing'),
+  excludedTagIds: parseIdList(process.env.EXCLUDED_TAG_IDS),
+
   // The helpful emoji can be unicode ("✅") or a custom emoji id (a numeric snowflake).
   // We match on id when the value is all digits, otherwise on the unicode name.
   helpfulEmoji: process.env.HELPFUL_EMOJI || '✅',
@@ -50,8 +54,8 @@ export const config = {
 
   leaderboardChannelId: process.env.LEADERBOARD_CHANNEL_ID || null,
   modFeedChannelId: process.env.MOD_FEED_CHANNEL_ID || null,
-  // Milestone alerts get their own channel. Falls back to the mod feed when unset, so
-  // new-thread and new-poster notices don't have to share with reward actions.
+  // Milestone alerts get their own channel. Notification only — no role is
+  // assigned; rewards are handed out by hand after a mod reaches out.
   milestoneChannelId: process.env.MILESTONE_CHANNEL_ID || null,
   modRoleId: process.env.MOD_ROLE_ID || null,
 
@@ -71,7 +75,7 @@ export const config = {
   // Logo-design competition tallying (/logovotes, /logopoll). Defaults so the commands can be
   // run bare; both are overridable per-invocation via command options. The vote-emoji default
   // is the :logocomp: custom emoji *id* — matching on id (not name) means renaming the emoji
-  // in the server never breaks the tally. A name ("logocomp"), a full "<:logocomp:id>", or a
+  // in the server never breaks the tally. A name ("logocomp"), a full "<:logocomp:id> / a
   // unicode emoji also work when passed via env or the command option.
   logoCompetitionChannelId: process.env.LOGO_COMPETITION_CHANNEL_ID || null,
   logoVoteEmoji: process.env.LOGO_VOTE_EMOJI || '1537600958245249154',

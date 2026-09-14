@@ -1,10 +1,12 @@
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import { isMod } from '../lib/permissions.js';
 
 const COMMUNITY_COMMANDS = [
   ['`/mystats`', 'See your feedback points, weekly count, and rank.'],
-  ['`/leaderboard`', 'View the feedback leaderboard (weekly or all-time).'],
+  ['`/leaderboard`', 'View feedback standings in a private reply. Public thank-you posts have no scores.'],
   ['`/needsreviews`', 'Find showcase posts that need more feedback.'],
   ['`/mygame publish`', 'Owner: request publication for this moderator-approved game thread.'],
+  ['`/mygame manage`', 'Owner: open Project tools for releases, galleries, updates, Wiki pages and private launch checks.'],
   ['`/projecturl`', 'Owner: save the playable URL for this thread. It does not publish a Project page.'],
   ['`/posttemplate`', 'Get a copyable template for build-help, playtest, or update posts.'],
   ['`/gameidea`', 'Ask Byte for a random game idea.'],
@@ -41,6 +43,10 @@ const postHelpCommand = {
     .setDescription('(Mod) Post and pin the command reference here.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   async execute(interaction) {
+    if (!isMod(interaction)) {
+      await interaction.reply({ content: 'This command is mods only.', flags: MessageFlags.Ephemeral });
+      return;
+    }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     let msg;

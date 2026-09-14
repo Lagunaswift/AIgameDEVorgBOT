@@ -19,6 +19,16 @@ function emptyDoc() {
   return {};
 }
 
+// Reject malformed exclusions rather than silently sending unwanted feedback prompts.
+function exclusionList(value, ids) {
+  if (!Array.isArray(value) || value.length > 1000 || value.some((entry) =>
+    typeof entry !== 'string' || !entry.trim() || entry.length > 100
+    || /[\x00-\x1f\x7f]/.test(entry) || (ids && !/^[0-9]{17,20}$/.test(entry.trim())))) {
+    throw new TypeError('Invalid feedback tag exclusion configuration.');
+  }
+  return [...new Set(value.map((entry) => entry.trim()))];
+}
+
 // Build the effective config by overlaying the Firestore doc onto the env baseline.
 // The scoring fields are validated after this overlay; callers must never score under an
 // invalid runtime override.
@@ -31,6 +41,8 @@ export function buildEffectiveConfig(docData) {
     watchedShowcaseForumIds: d.watchedShowcaseForumIds ?? envConfig.watchedShowcaseForumIds,
     watchedCompetitionForumIds:
       d.watchedCompetitionForumIds ?? envConfig.watchedCompetitionForumIds,
+    excludedTagNames: exclusionList(d.excludedTagNames ?? envConfig.excludedTagNames, false),
+    excludedTagIds: exclusionList(d.excludedTagIds ?? envConfig.excludedTagIds, true),
     helpfulEmoji: d.helpfulEmoji ?? envConfig.helpfulEmoji,
     minCommentLength: d.minCommentLength ?? envConfig.minCommentLength,
     maxPointsPerThreadPerUser:

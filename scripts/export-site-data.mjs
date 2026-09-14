@@ -21,6 +21,7 @@ import { readProjectPublishing } from './project-publishing-export.mjs';
 import { MEDIA_COLLECTION, mediaState } from '../src/lib/project-media-contracts.mjs';
 import { buildSelectedGallery } from './selected-project-media.mjs';
 import { readSelectedUpdates } from './selected-project-updates.mjs';
+import { readProjectWikis } from './project-wiki-export.mjs';
 import {
   parsePublishTagId,
   preserveGeneratedAtIfUnchanged,
@@ -987,6 +988,8 @@ async function main() {
 
   const publishing = await readProjectPublishing({ db, projects, generatedAt: new Date().toISOString() });
 
+  const wikis = await readProjectWikis({ db, projects, generatedAt: new Date().toISOString() });
+
   // Finish every external read and contract transformation before replacing any JSON
   // snapshot. Each file is then written via a same-directory temp file and atomic rename;
   // the workflow's staging clone is the all-files promotion boundary.
@@ -1002,6 +1005,7 @@ async function main() {
     await writeReport(args.report, { version: 1, withheldIds, withheldProjectIds, unpublishedProjectIds });
     filesWritten.push(args.report);
     filesWritten.push(await writeJson(args.out, 'project-publishing.json', publishing));
+    filesWritten.push(await writeJson(args.out, 'project-wiki.json', wikis));
     filesWritten.push(await writeJson(args.out, 'projects.json', {
       version: 1,
       generatedAt,

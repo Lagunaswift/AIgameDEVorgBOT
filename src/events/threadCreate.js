@@ -2,8 +2,7 @@ import { Events, EmbedBuilder } from 'discord.js';
 import { config } from '../config.js';
 import { modeForForum, getEffectiveConfig } from '../services/config.js';
 import { registerThread } from '../services/threads.js';
-import { scheduleNudgeCheck } from '../services/screenshotNudge.js';
-import { scheduleGuidelinesCheck } from '../services/guidelinesNudge.js';
+import { schedulePostNudgeCheck, combinedNudgeDelayMinutes } from '../services/postNudge.js';
 import { maybeSendHelpfulHintForThread } from '../services/helpfulHint.js';
 
 export const name = Events.ThreadCreate;
@@ -28,12 +27,8 @@ export async function execute(thread, newlyCreated) {
       }
       await notifyModFeed(thread, data, mode);
 
-      if (mode === 'showcase' && config.screenshotNudgeEnabled) {
-        scheduleNudgeCheck(thread, config.screenshotNudgeDelayMinutes * 60000);
-      }
-      if (mode === 'showcase' && config.guidelinesNudgeEnabled) {
-        scheduleGuidelinesCheck(thread, config.guidelinesNudgeDelayMinutes * 60000);
-      }
+      const delay = combinedNudgeDelayMinutes(config);
+      if (mode === 'showcase' && delay !== null) schedulePostNudgeCheck(thread, delay * 60000);
     }
   } catch (err) {
     console.error('[threadCreate] failed to register thread:', err.message);

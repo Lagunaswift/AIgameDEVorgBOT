@@ -1,6 +1,8 @@
 import { getDb, serverTimestamp } from '../firebase.js';
+import { getEffectiveConfig } from './config.js';
+import { threadHasExcludedTag } from '../lib/tags.js';
 
-function dedupRef(threadId) {
+export function guidelinesDedupRef(threadId) {
   return getDb().collection('guidelinesNudges').doc(threadId);
 }
 
@@ -13,6 +15,13 @@ const TEMPLATE_HEADERS = [
   '**what i\'m building:**',
   '**what changed:**',
 ];
+
+export const GUIDELINES_BODY = 'Add one or two specific feedback questions and say how long the build takes to play.';
+export const GUIDELINES_WARNING = 'Please update the post within 12 hours.';
+export async function isGuidelinesExempt(thread) {
+  const cfg = await getEffectiveConfig();
+  return threadHasExcludedTag(thread, { names: cfg.excludedTagNames || [], ids: cfg.excludedTagIds || [] });
+}
 
 export async function threadFollowsGuidelines(thread) {
   let starter = null;
@@ -43,7 +52,8 @@ export async function sendGuidelinesNudge(thread, ownerId, { allowArchived = fal
     if (!fresh || fresh.archived) return false;
   }
 
-  const ref = dedupRef(thread.id);
+  if (await isGuidelinesExempt(thread)) return false;
+  const ref = guidelinesDedupRef(thread.id);
   try {
     await ref.create({
       threadId: thread.id,
