@@ -2,7 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
 import { getDb } from '../firebase.js';
 import { listThreadsByMode } from '../services/threads.js';
-import { threadFollowsGuidelines, sendGuidelinesNudge } from '../services/guidelinesNudge.js';
+import { threadFollowsGuidelines, sendGuidelinesNudge, isGuidelinesExempt } from '../services/guidelinesNudge.js';
 
 const MAX_NUDGES_PER_RUN = 100;
 const SEND_DELAY_MS = 2000;
@@ -74,7 +74,7 @@ async function handleSingleThread(interaction) {
     if (sent) {
       await interaction.editReply('Nudge sent.');
     } else {
-      await interaction.editReply('This thread was already nudged.');
+      await interaction.editReply('No nudge sent. This thread is excluded or has already been nudged.');
     }
   } catch (err) {
     console.error(`[nudgequestions] failed to nudge thread ${thread.id}:`, err.message);
@@ -108,6 +108,7 @@ async function handleScan(interaction) {
 
     let passes;
     try {
+      if (await isGuidelinesExempt(thread)) continue;
       passes = await threadFollowsGuidelines(thread);
     } catch (err) {
       console.error(

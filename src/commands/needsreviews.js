@@ -1,5 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { listThreadsByMode } from '../services/threads.js';
+import { getEffectiveConfig } from '../services/config.js';
+import { threadHasExcludedTag } from '../lib/tags.js';
 
 export const data = new SlashCommandBuilder()
   .setName('needsreviews')
@@ -8,6 +10,8 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
+  const cfg = await getEffectiveConfig();
+  const excluded = { names: cfg.excludedTagNames || [], ids: cfg.excludedTagIds || [] };
   const threads = await listThreadsByMode('showcase');
   if (threads.length === 0) {
     await interaction.editReply('No registered showcase threads yet.');
@@ -18,7 +22,7 @@ export async function execute(interaction) {
   for (const t of threads) {
     try {
       const channel = await interaction.client.channels.fetch(t.threadId);
-      if (!channel) continue;
+      if (!channel || threadHasExcludedTag(channel, excluded)) continue;
 
       const total = channel.messageCount ?? channel.totalMessageSent ?? 0;
       const comments = Math.max(0, total - 1);

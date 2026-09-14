@@ -27,12 +27,17 @@ function messageImage(message) {
   return null;
 }
 
-export function buildScreenshotNudgeMessage(ownerId) {
-  return `Hey <@${ownerId}>, attach a screenshot or short gameplay GIF to a new reply in this thread. ` +
+export function buildScreenshotBody() {
+  return `Attach a screenshot or short gameplay GIF to a new reply in this thread. ` +
     `Upload it from your own account so Byte can find your game's image. Link previews and other members' uploads won't be used.`;
 }
 
-function dedupRef(threadId) {
+export function buildScreenshotNudgeMessage(ownerId) {
+  const body = buildScreenshotBody();
+  return `Hey <@${ownerId}>, ${body[0].toLowerCase()}${body.slice(1)}`;
+}
+
+export function screenshotDedupRef(threadId) {
   return getDb().collection('screenshotNudges').doc(threadId);
 }
 
@@ -81,7 +86,7 @@ export async function sendScreenshotNudge(thread, ownerId, { allowArchived = fal
     if (!fresh || fresh.archived) return false;
   }
 
-  const ref = dedupRef(thread.id);
+  const ref = screenshotDedupRef(thread.id);
   try {
     await ref.create({
       threadId: thread.id,
