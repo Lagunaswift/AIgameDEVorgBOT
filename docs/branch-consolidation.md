@@ -1,65 +1,83 @@
 # Branch consolidation and user guidance
 
 Date: 14 September 2026
-Status: **integration candidate; final CI, merge and deployment evidence pending**.
+Status: **merged; full CI, Railway deployment and live staged export passed**.
 
 The owner requested updated user-facing documentation and all existing branches merged
-into main. The inventory below records every branch tip observed at the start. Reconciliation
-preserves those histories as merge parents while resolving obsolete implementations to the
-current approved architecture. An old branch having a different commit ID after a squash
-merge does not mean its feature is missing.
+into main. All 14 original Bot tips below are now ancestors of main through a normal
+consolidation merge. The Site likewise incorporated its 14 original tips. Branch refs
+were retained, and both repositories had zero open pull requests at the final check.
 
-This is not a promise to activate every prototype. Incomplete transfer payloads do not
-constitute a usable implementation. Superseded parallel runtimes, old moderator copy and
-unsafe publication assumptions must not replace newer tested behaviour. No branches or
-member data are deleted, no migration is rerun, and hosting flags remain off.
+Histories have explicit resolutions, not blanket activation of obsolete prototypes.
+Incomplete encoded transfers, parallel runtimes and superseded migration/publication
+assumptions do not replace newer safe code. No production migration was rerun, member
+records were not created for tests, and hosted-game flags remain off.
 
-Genuine outstanding work integrated here: Game Wiki draft/public editing and its Bot
-producer, plus the older combined nudge/exclusion intent reconciled with modern safety
-and wording. Updated docs cover creator controls, site moderation, current external-link
-jams, commands, feedback, posting, Wiki editing, draft/public separation and refresh delays.
+## Delivered and verified
 
-## Verification and release
+Current README, private help and owner/welcome guidance now match the Site's creator and
+moderator guides. Game Wiki export contains only explicit published copies from approved
+owner-published Projects. Existing gallery/update/publishing behaviour remains intact.
 
-Before merge: Site/Bot full exact-source suites with loopback-only demo Firestore, all
-browser fixtures including Wiki/real Pagefind index, inspected desktop/mobile screenshots,
-Astro/production build and documentation checks. No production member records used.
+The combined question/image reminder uses current owner-reply image checks, existing
+per-half dedup records, late owner/archive checks and gentle copy. The /posthelp handler
+now has a server-side moderator check. No announcement, channel/tag change or batch nudge
+was run as a deployment test.
 
-Release order: Site consumer/editor first; verify Vercel and strict live anonymous probes.
-Then Bot producer; verify Railway commit status and staged live export/build/promotion.
-Record exact merge/run IDs below. A real member's production OAuth/save/publication and
-Cloudflare/runtime acceptance remain separate unverified gates.
+A final audit found that tag exclusions were documented and read by callers but not loaded
+by the environment/runtime configuration. Both paths now forward excludedTagNames and
+excludedTagIds; tests cover defaults, overrides, empty lists and malformed inputs. No live
+tag ID or configuration document was changed. Optional ID exclusions do not need cached
+forum names; name-based exclusions use available forum metadata.
 
 ## Original branch resolution register
-
 
 ### Bot
 
 | Original branch | Exact original tip | Resolution |
 | --- | --- | --- |
-| `chore/bot-security-baseline` | `9d9dc7d9cb540f22e90e87159c120ddc464ea453` | Already applied; all six baseline files equal current main. |
-| `claude/daily-events-summary-humor-v7ftx6` | `b6a79df81b4ae0df630b2b32700f7ae26df6527e` | Already an ancestor of main; preserve later public-source privacy controls. |
-| `claude/discord-slash-commands-channels-zz71v0` | `f78253db1a122e47741c8ee496ca36c716151484` | Guild contexts/integration registration already implemented in shared registerCommands; retain current automatic registration and refresh troubleshooting docs. |
-| `claude/guidelines-image-attack-messaging-zyl36g` | `3e48ff258158f6de96d393fb74823086ee80e687` | Integrate combined prompt/exclusion intent using modern owner-reply image detection, shared dedup, late archive/owner checks and gentle copy. Do not restore deletion threats or original-post-only images. Exact excluded IDs stay optional; no new live tag assignment. |
-| `claude/logo-competition-voting-pmwvgy` | `7e80d946e3673db5a8047cf1d89497bffb93e3e6` | Already an ancestor of main; current voting implementation retained. |
-| `claude/weekly-leaderboard-missing-ij6ytq` | `6c9ad573db074bdceb2bfe2bca2b18e041dd04e4` | Catch-up scheduling/manual post command already incorporated. Retain current public names-only thank-you roll; do not restore a public scored/ranked post. |
-| `feat/hosted-builds-jam-platform` | `4b0fb755f6f0c7df8e08697f442c2bce77b122d9` | Already released; canonical single runtime-control architecture retained, hosting remains disabled. |
-| `feat/hosted-builds-jam-runtime` | `f2ae0b9ce4dfdbb425f6c873bda2f33dbf59114a` | Conflicting earlier parallel runtime/collection design superseded by released hosted-builds-jam-platform. Do not activate a second reconciler/exporter or bypass runtime acceptance. |
-| `feat/platform-v2-project-destinations` | `ea792181c1b47fa3aac65db19fda39f470a7308b` | Competing early retirement proposal superseded by current canonical Project destinations. Preserve external/unlinked and event-specific URLs. Full /projecturl retirement still needs reviewed live inventory; no silent migration or new fallback. |
-| `feat/project-media-v2-3` | `43c00e2ebe8b219b50b0151bddde962973793b64` | Already released; retain selected attachment safety and later exports. |
-| `feat/project-publishing-v2` | `b7eefc78d86d2e29d807960194d39b33db94fcde` | Already released; preserve publishing sidecar and newer exports. |
-| `feat/project-updates-v2-4` | `2ade9bb68c0db55297083c9f0f9ac0508bc06b2c` | Already released; exact current files retained. |
-| `feat/project-wiki-v2-3` | `9a8855abc4519e8bc765d46fa607080969c30b79` | Integrate pending published-copy-only Wiki sidecar and current export workflow; Site consumer deploys first. |
-| `review/phase3-occupancy-repair` | `81b575377c4d874a45239bea573fdf77ad5d416d` | Retain current stronger whole-plan transaction/resume guards and completed migration. Historical single-pair repair is superseded; never rerun live apply. |
+| `chore/bot-security-baseline` | `9d9dc7d9cb540f22e90e87159c120ddc464ea453` | Already applied; current security baseline retained. |
+| `claude/daily-events-summary-humor-v7ftx6` | `b6a79df81b4ae0df630b2b32700f7ae26df6527e` | Already an ancestor; later public-source privacy controls retained. |
+| `claude/discord-slash-commands-channels-zz71v0` | `f78253db1a122e47741c8ee496ca36c716151484` | Guild contexts/integration registration already implemented in shared registerCommands. Current startup registration and troubleshooting guidance retained. |
+| `claude/guidelines-image-attack-messaging-zyl36g` | `3e48ff258158f6de96d393fb74823086ee80e687` | Combined prompt/exclusion intent integrated with current owner-reply images, dedup records, late owner/archive checks and gentle copy. No deletion threat or first-post-only restriction. Environment/runtime exclusions now wired and tested. |
+| `claude/logo-competition-voting-pmwvgy` | `7e80d946e3673db5a8047cf1d89497bffb93e3e6` | Already an ancestor; current voting implementation retained. |
+| `claude/weekly-leaderboard-missing-ij6ytq` | `6c9ad573db074bdceb2bfe2bca2b18e041dd04e4` | Catch-up scheduling/manual post command already incorporated. Current public names-only thank-you roll retained, not old public scored/ranked output. |
+| `feat/hosted-builds-jam-platform` | `4b0fb755f6f0c7df8e08697f442c2bce77b122d9` | Already released; canonical single runtime-control architecture retained; hosting disabled. |
+| `feat/hosted-builds-jam-runtime` | `f2ae0b9ce4dfdbb425f6c873bda2f33dbf59114a` | Conflicting parallel runtime/collection design superseded by released foundation. No second reconciler/exporter activated or runtime acceptance bypassed. |
+| `feat/platform-v2-project-destinations` | `ea792181c1b47fa3aac65db19fda39f470a7308b` | Competing early retirement proposal superseded by current canonical destinations. External/unlinked and event-specific URLs preserved. Full /projecturl retirement still needs reviewed live inventory. |
+| `feat/project-media-v2-3` | `43c00e2ebe8b219b50b0151bddde962973793b64` | Already released; selected-attachment safety and later exports retained. |
+| `feat/project-publishing-v2` | `b7eefc78d86d2e29d807960194d39b33db94fcde` | Already released; publishing sidecar and newer exports retained. |
+| `feat/project-updates-v2-4` | `2ade9bb68c0db55297083c9f0f9ac0508bc06b2c` | Already released; current selected-update files retained. |
+| `feat/project-wiki-v2-3` | `9a8855abc4519e8bc765d46fa607080969c30b79` | Published-copy-only Wiki sidecar and current staged export integrated; deployed after Site consumer. |
+| `review/phase3-occupancy-repair` | `81b575377c4d874a45239bea573fdf77ad5d416d` | Current stronger whole-plan transaction/resume guards retained. Historical single-pair repair superseded; completed production migration not rerun. |
 
-## What branch ancestry does and does not prove
+## Branch ancestry proof
 
-Acceptance requires each original tip above to be an ancestor of the corresponding final
-main. Final merges must preserve parents, not squash away the consolidation ancestry.
-This establishes that every history has an explicit resolution. It does not certify every
-old proposal as a shipped feature; the resolution column and the roadmap remain authoritative.
+The final full CI gate verified that all 14 tips are ancestors of the candidate. GitHub's
+candidate-to-merge comparison then confirmed zero commits behind and an identical tree.
+Fresh branch listings matched the original tips and retained the consolidation branch.
+The normal merge preserves those relationships; no squash or history rewrite was used.
+This proves each recorded history is resolved, not that every old proposal is a live feature.
 
-## Live evidence
+## Release evidence
 
-Pending final CI and deployment. Do not report this table as completed until the exact
-release checks pass. The remaining roadmap is in FULL-ROADMAP-EXECUTION.md in the Site.
+| Gate | Evidence | Result |
+| --- | --- | --- |
+| Final Bot candidate | `3eee9cb3c1ac322105d3e47b43f57626b229def0` | Includes configuration wiring repair |
+| Full Bot CI | `34851992349` | Clean install, all-tip ancestry and real demo-Firestore suite passed |
+| Site deployed first | Site #14 merge `2965195a7dc5945216137708cbc461e535e0d2c0`, production `34852200679` | Build, Vercel deployment and live guards passed before Bot merge |
+| Bot normal merge | PR #11, `0ac567f00c8e9d00a7bacbcb16cd020f609cd663` | Railway reported successful deployment of this exact commit |
+| Live staged export | `34852522691` | Source export, validation, staged Site build, promotion and push passed |
+| Refreshed Site | `2e1be76c61a0bc00dbe902211617709df70acaa7`, production `34852731575` | Resulting production deployment and live checks passed |
+
+Review was assistant source/test verification, not a claimed independent specialist review.
+Live export of existing data and anonymous Site checks do not prove a real member completed
+production OAuth/edit/save/publication. Real member and moderator end-to-end acceptance,
+client rules/TTL, backups, account-wide deletion and Cloudflare runtime acceptance remain
+separate gates. No real member content was fabricated for testing and no old migration
+was rerun.
+
+The Site maintains the cross-repository release register in
+`docs/releases/BRANCH-CONSOLIDATION.md` and remaining work in
+`docs/releases/FULL-ROADMAP-EXECUTION.md`. Next independent package: explicit Project/tool/
+guide connections. Hosted-game ZIP uploads and public runtime remain disabled.
