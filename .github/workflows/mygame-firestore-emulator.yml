@@ -22,7 +22,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
+      - name: Verify reviewed branch ancestry
+        run: |
+          python3 - <<'PYANCESTRY'
+          import pathlib,re,subprocess
+          text=pathlib.Path('docs/branch-consolidation.md').read_text()
+          tips=re.findall(r'^\| `[^`]+` \| `([0-9a-f]{40})` \|',text,re.M)
+          assert len(tips)==14, 'Incomplete original Bot branch register'
+          for tip in tips: subprocess.run(['git','merge-base','--is-ancestor',tip,'HEAD'],check=True)
+          print('PASS: all 14 original Bot branch tips are ancestors of this candidate')
+          PYANCESTRY
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
