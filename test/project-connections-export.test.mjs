@@ -36,6 +36,7 @@ test('connections reads finish before public writes and promotion follows staged
  assert.ok(source.indexOf('const connections = await readProjectConnections')<source.indexOf('const filesWritten = []'));
  assert.match(source,/writeJson\(args.out, 'project-connections.json', connections\)/);
  const flow=readFileSync(new URL('../.github/workflows/export-site.yml',import.meta.url),'utf8');
+ for(const required of ['scripts/export-site-data.mjs','scripts/validate-site-export.mjs','scripts/site-export-safety.mjs'])assert.ok(flow.includes(`- ${required}`));
  assert.ok(flow.indexOf('Build staged site')<flow.indexOf('cp site-staging/src/data/project-connections.json'));
  assert.match(flow,/git add [^\n]*src\/data\/project-connections\.json/);
 });

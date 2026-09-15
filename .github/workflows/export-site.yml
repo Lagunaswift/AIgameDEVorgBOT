@@ -20,6 +20,9 @@ on:
   push:
     branches: [main]
     paths:
+      - scripts/export-site-data.mjs
+      - scripts/validate-site-export.mjs
+      - scripts/site-export-safety.mjs
       - scripts/selected-project-updates.mjs
       - src/lib/project-updates-contracts.mjs
       - scripts/project-publishing-export.mjs
