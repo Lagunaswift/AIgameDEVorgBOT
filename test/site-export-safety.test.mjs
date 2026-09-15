@@ -9,6 +9,7 @@ import {
   parsePublishTagId,
   preserveGeneratedAtIfUnchanged,
   removeStaleAssets,
+  validateConnectionsSnapshot,
   validateExportReport,
   validateProjectLinks,
   validateProjectsSnapshot,
@@ -262,4 +263,33 @@ test('staging cleanup removes stale generated assets only', async () => {
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+test('connections sidecar validation accepts only approved relationships from the shared contract', () => {
+  const approved = projectsSnapshot([project(), project({ id: 'project-2', slug: 'second-game' })]);
+  const entry = (overrides = {}) => ({
+    projectId: 'project-1',
+    projectSlug: 'test-game',
+    genres: ['puzzle'],
+    aiUse: [],
+    tools: ['godot-mcp'],
+    guides: [],
+    ...overrides,
+  });
+  const connections = (projects, generatedAt = '2026-09-14T00:00:00.000Z') => ({
+    version: 1,
+    generatedAt,
+    projects,
+  });
+  assert.doesNotThrow(() => validateConnectionsSnapshot(connections([entry()]), approved));
+  // Withdrawn or never-published choices legitimately produce the empty snapshot.
+  assert.doesNotThrow(() => validateConnectionsSnapshot(connections([], null), approved));
+  // Unapproved Projects, stale slugs and malformed envelopes are promotion failures.
+  assert.throws(() => validateConnectionsSnapshot(connections([entry({ projectId: 'withheld' })]), approved), /shared public connections contract/);
+  assert.throws(() => validateConnectionsSnapshot(connections([entry({ projectSlug: 'renamed' })]), approved), /shared public connections contract/);
+  assert.throws(() => validateConnectionsSnapshot(connections([entry(), entry()]), approved), /shared public connections contract/);
+  assert.throws(() => validateConnectionsSnapshot(connections([entry({ genres: ['made-up'] })]), approved), /shared public connections contract/);
+  assert.throws(() => validateConnectionsSnapshot(connections([entry()], 'not-a-timestamp'), approved), /shared public connections contract/);
+  assert.throws(() => validateConnectionsSnapshot(connections([], null), null), /approved Project snapshots/);
+  assert.throws(() => validateConnectionsSnapshot(null, approved), /must be an object/);
 });

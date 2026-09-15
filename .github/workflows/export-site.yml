@@ -26,6 +26,8 @@ on:
       - src/lib/project-publishing/**
       - scripts/project-wiki-export.mjs
       - src/lib/project-wiki/**
+      - scripts/project-connections-export.mjs
+      - src/lib/project-connections/**
       - .github/workflows/export-site.yml
 
 concurrency:
@@ -89,6 +91,7 @@ jobs:
           cp site-staging/src/data/projects.json site/src/data/projects.json
           cp site-staging/src/data/project-publishing.json site/src/data/project-publishing.json
           cp site-staging/src/data/project-wiki.json site/src/data/project-wiki.json
+          cp site-staging/src/data/project-connections.json site/src/data/project-connections.json
           cp site-staging/src/data/showcase.json site/src/data/showcase.json
           cp site-staging/src/data/jams.json site/src/data/jams.json
           cp site-staging/src/data/builds.json site/src/data/builds.json
@@ -105,7 +108,7 @@ jobs:
         run: |
           git config user.name "Lagunaswift"
           git config user.email "jamesswift1988@gmail.com"
-          git add src/data/projects.json src/data/project-publishing.json src/data/project-wiki.json src/data/showcase.json src/data/jams.json src/data/builds.json public/assets/projects public/assets/showcase public/assets/awards
+          git add src/data/projects.json src/data/project-publishing.json src/data/project-wiki.json src/data/project-connections.json src/data/showcase.json src/data/jams.json src/data/builds.json public/assets/projects public/assets/showcase public/assets/awards
           if git diff --cached --quiet; then
             echo "No data changes this run."
           else

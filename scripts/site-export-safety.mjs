@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeJamId, normalizeProjectUrl } from '../src/lib/publicMetadata.js';
+import { parseConnectionsPayload } from '../src/lib/project-connections/contracts.mjs';
 
 export const DISCORD_SNOWFLAKE_RE = /^\d{17,20}$/;
 const PROJECT_STATUSES = new Set(['development', 'playable', 'released', 'paused']);
@@ -379,6 +380,22 @@ export function validateProjectLinks(showcase, projects) {
       throw new Error(`candidate game ${game.id} Project slug mismatch for ${game.projectId}`);
     }
   }
+}
+
+// The connections sidecar is a strict projection of owner choices for approved Projects.
+// Validation runs the byte-identical shared contract against the freshly approved Project
+// set, so a malformed, stale or unapproved relationship can never reach promotion. Owners
+// withdrawing every public choice legitimately yields an empty projects list; only the
+// contract decides, never a guessed match or retained stale entry.
+export function validateConnectionsSnapshot(candidate, projects) {
+  if (!isRecord(candidate)) throw new Error('candidate project-connections.json must be an object');
+  if (!projects || !Array.isArray(projects.projects)) {
+    throw new Error('approved Project snapshots are required for connections validation');
+  }
+  if (parseConnectionsPayload(candidate, projects.projects) === null) {
+    throw new Error('candidate project-connections.json violates the shared public connections contract');
+  }
+  return candidate;
 }
 
 export async function readJson(filePath) {
