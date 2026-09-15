@@ -57,7 +57,7 @@ test('real exporter wiring uses selected images in order, ignores drafts and cle
  const f=fixture();f.selection.items.push(image({id:'gallery_456',attachmentId:'667890123456789012',visibility:'draft',caption:'PRIVATE DRAFT'}));
  const result=await f.run(out);assert.equal(result.projects.length,1);const gallery=result.projects[0].media;
  assert.equal(gallery.length,1);assert.equal(gallery[0].alt,'Bridge');assert.equal(gallery[0].caption,'A crossing');
- assert.match(gallery[0].src,/\/selected-[a-f0-9]{64}\.webp$/);assert.equal((await sharp(path.join(out,'public',gallery[0].src)).metadata()).format,'webp');
+ assert.match(gallery[0].src,/\/selected-[a-f0-9]{64}\.webp$/);assert.equal((await sharp(await fs.readFile(path.join(out,'public',gallery[0].src))).metadata()).format,'webp');
  for(const forbidden of [M,A,'SECRET','PRIVATE DRAFT','messageId','attachmentId','ownerId'])assert.equal(JSON.stringify(result.projects).includes(forbidden),false);
  assert.deepEqual(f.reads,['gallery-project']);
  f.selection.items=[];const empty=await f.run(out);assert.equal(empty.projects[0].media.length,0);
