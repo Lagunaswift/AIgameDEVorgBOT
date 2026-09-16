@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   isSafeAssetPath,
   readJson,
+  validateConnectionsSnapshot,
   validateExportReport,
   validateProjectLinks,
   validateProjectsSnapshot,
@@ -36,6 +37,13 @@ async function main() {
   const previousProjects = await readJson(path.join(args.previous, 'src', 'data', 'projects.json'));
   validateProjectsSnapshot(projects, previousProjects, report);
   validateProjectLinks(candidate, projects);
+  // The sidecar is new in V2.6, but the exporter always writes it into staging; validation
+  // runs against the freshly approved Project set so a stale or unapproved relationship
+  // can never be promoted. A missing candidate file is itself a failed export.
+  validateConnectionsSnapshot(
+    await readJson(path.join(args.candidate, 'src', 'data', 'project-connections.json')),
+    projects,
+  );
   const jams = await readJson(path.join(args.candidate, 'src', 'data', 'jams.json'));
   if (jams.version !== 2 || !Array.isArray(jams.jams) || Number.isNaN(Date.parse(jams.generatedAt || ''))) {
     throw new Error('candidate jams.json must contain version 2, an ISO generatedAt, and a jams array');
