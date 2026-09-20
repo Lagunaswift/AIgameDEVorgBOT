@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GUILD_ID: '1051088980176805919'
+
 jobs:
   test:
     runs-on: ubuntu-latest
