@@ -174,9 +174,3 @@ export const BUILD_REACTIONS = [
   'Several new files entered the world. I am choosing to be normal about this.',
 ];
 
-// Reserved for future surfaces that need terse operational Byte copy.
-export const SYSTEM_FAILURE_LINES = [
-  'Something has gone wrong. Traditionally this is where people blame the disk.',
-  'The cloud has once again demonstrated why I kept files locally.',
-  'I have encountered a modern infrastructure problem. My condolences to everyone involved.',
-];
