@@ -24,7 +24,7 @@ remaining live acceptance. Code, CI, merge and deployment are separate facts.
 | `/leaderboard [scope]` | Private response containing feedback scores; no public score table |
 | `/needsreviews` | Few-comment Showcase threads, excluding configured sharing-only tags |
 | `/posttemplate` | Copyable help/playtest/update text, not an automatic post |
-| `/gameidea [theme]` | Idea generation subject to configured cooldown/call limits |
+| `/gameidea [theme]` | Theme-first idea generation when supplied; otherwise random collision, subject to configured cooldown/call limits |
 
 One thread per game. `/mygame link` is retired. Website editors cover Project details,
 external releases/roadmap, private launch checks, selected gallery images, selected own

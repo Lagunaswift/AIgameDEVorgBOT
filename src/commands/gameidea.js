@@ -1,7 +1,8 @@
 // /gameidea [theme] — everyone. Byte rolls a random ingredient collision and develops it
-// into a game pitch (services/gameIdeas.js). Replies publicly: the fun is communal, and
-// the seed footer shows the machinery. Throttled per user (cooldown; mods bypass) and per
-// day (server-wide cap on API calls). With no API key it serves the raw mad-lib instead.
+// into a game pitch (services/gameIdeas.js). A supplied theme is the primary creative
+// constraint; without one, the random collision drives the pitch. Replies publicly: the
+// fun is communal, and the seed footer shows the machinery. Throttled per user (cooldown;
+// mods bypass) and per day (server-wide cap on API calls).
 
 import { SlashCommandBuilder } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
@@ -58,7 +59,9 @@ export async function execute(interaction) {
   const footer =
     res.status === 'madlib'
       ? `-# ${byteTag} seed: ${res.seedLabel} · raw ingredients; no API key configured`
-      : `-# ${byteTag} seed: ${res.seedLabel} · idea #${res.number}`;
+      : res.status === 'fallback'
+        ? `-# ${byteTag} seed: ${res.seedLabel} · fallback ingredients; model unavailable`
+        : `-# ${byteTag} seed: ${res.seedLabel} · idea #${res.number}`;
 
   await interaction.editReply({
     content: `${res.text}\n\n${footer}`,
