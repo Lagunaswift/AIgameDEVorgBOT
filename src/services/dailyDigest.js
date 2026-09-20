@@ -50,6 +50,7 @@ import {
   QUIET_DAYS,
   SIGNOFFS,
   MVP_EPITHETS,
+  BUILD_REACTIONS,
 } from '../lib/byte.js';
 
 function dailyPostsRef() {
@@ -248,6 +249,7 @@ function buildLines(stats, rng) {
     }
     const dropped = builds.length - MAX_BUILD_LINES;
     if (dropped > 0) lines.push(`• plus ${dropped} more. Someone get me a Disk 2.`);
+    lines.push(pick(rng, BUILD_REACTIONS));
   }
 
   const entries = stats.competitionThreads;
