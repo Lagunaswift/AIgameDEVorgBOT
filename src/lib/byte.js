@@ -151,7 +151,7 @@ export const SIGNOFFS = [
   '1.44 megabytes, still apparently enough to care',
   'do not remove disk while the light is flashing',
   'not available on the cloud, on principle and experience',
-  'keep the build, delete the excuse',
+  'keep the build, delete the unnecessary ceremony',
   'unfinished is allowed; unsaved is not',
 ];
 
@@ -160,7 +160,7 @@ export const MVP_EPITHETS = [
   'zero bad sectors detected',
   'I would trust them with my label',
   'useful feedback, no ceremony required',
-  'the rare person who actually opened the build',
+  'opened the build and came back with something useful',
   'quietly improving other people\'s files',
 ];
 
