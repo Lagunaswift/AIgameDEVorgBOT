@@ -855,13 +855,19 @@ export function describeSeed(seed) {
   return seed.wildcard ? `${label} · WILDCARD` : label;
 }
 
-// No-API-key fallback: serve the raw collision as a mad-lib. Less polished than the
-// developed pitch, still a perfectly usable jam prompt.
-export function madlibsIdea(seed, number) {
+// Model-free fallback: serve the raw collision as a mad-lib. When a member supplied a
+// theme, keep it explicit in the premise so an API outage never silently discards their
+// creative constraint.
+export function madlibsIdea(seed, number, theme = null) {
+  const premise = theme
+    ? `${capitalise(seed.genre)} built around the theme ${JSON.stringify(theme)}, where you play as ${seed.protagonist}` +
+      `${seed.setting ? `, set in ${seed.setting}` : ''}.`
+    : `${capitalise(seed.genre)} where you play as ${seed.protagonist}` +
+      `${seed.setting ? `, set in ${seed.setting}` : ''}.`;
+
   const lines = [
     `**Untitled game #${number}**`,
-    `${capitalise(seed.genre)} where you play as ${seed.protagonist}` +
-      `${seed.setting ? `, set in ${seed.setting}` : ''}.`,
+    premise,
   ];
   if (seed.twist) lines.push(`**The hook:** ${seed.twist}.`);
   if (seed.wildcard) lines.push('*Wildcard rule: the genre may change.*');
