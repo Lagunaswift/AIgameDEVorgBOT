@@ -12,7 +12,7 @@ import { cooldownRemaining, noteUse, generateIdea } from '../services/gameIdeas.
 
 export const data = new SlashCommandBuilder()
   .setName('gameidea')
-  .setDescription('Ask Byte for a random game idea.')
+  .setDescription('Ask Byte to turn a theme or random collision into a game idea.')
   .addStringOption((o) =>
     o
       .setName('theme')
@@ -32,7 +32,7 @@ export async function execute(interaction) {
   const wait = cooldownRemaining(interaction.user.id, cfg.gameIdeaCooldownSeconds);
   if (wait > 0 && !isMod(interaction)) {
     await interaction.reply({
-      content: `Idea chip cooling down. Try again in ${formatWait(wait)}. I only have 1.44 megabytes, pace yourself.`,
+      content: `Fine. I had 1.44 megabytes of plans for the evening. Try again in ${formatWait(wait)}.`,
       ephemeral: true,
     });
     return;
@@ -49,7 +49,7 @@ export async function execute(interaction) {
 
   if (res.status === 'capped') {
     await interaction.editReply(
-      `Today's idea quota (${res.cap}) is spent. The drive refills at midnight UTC.`,
+      `Today's idea quota (${res.cap}) is spent. The cloud has introduced scarcity again. The drive refills at midnight UTC.`,
     );
     return;
   }
@@ -58,9 +58,9 @@ export async function execute(interaction) {
   const byteTag = parseDisplayEmoji(cfg.byteEmoji).tag;
   const footer =
     res.status === 'madlib'
-      ? `-# ${byteTag} seed: ${res.seedLabel} · raw ingredients; no API key configured`
+      ? `-# ${byteTag} seed: ${res.seedLabel} · raw ingredients; local processing, as nature intended`
       : res.status === 'fallback'
-        ? `-# ${byteTag} seed: ${res.seedLabel} · fallback ingredients; model unavailable`
+        ? `-# ${byteTag} seed: ${res.seedLabel} · model unavailable; the cloud has once again proved my point`
         : `-# ${byteTag} seed: ${res.seedLabel} · idea #${res.number}`;
 
   await interaction.editReply({
