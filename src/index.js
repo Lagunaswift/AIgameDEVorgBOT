@@ -9,7 +9,6 @@ import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js'
 import { scheduleDailyDigest, catchUpDailyDigest } from './services/dailyDigest.js';
 import {
   checkCodexResetWatcher,
-  postCodexResetMockOnce,
   scheduleCodexResetWatcher,
 } from './services/codexResetWatcher.js';
 import { getEffectiveConfig } from './services/config.js';
@@ -92,9 +91,6 @@ async function main() {
       scheduleCodexResetWatcher(client);
       checkCodexResetWatcher(client, { trigger: 'boot' }).catch((err) =>
         console.error('[codexReset] boot check failed:', err.message),
-      );
-      postCodexResetMockOnce(client).catch((err) =>
-        console.error('[codexReset] live test failed:', err.message),
       );
     } else {
       console.log('[startup] Codex reset watcher disabled via CODEX_RESET_ENABLED=false');
