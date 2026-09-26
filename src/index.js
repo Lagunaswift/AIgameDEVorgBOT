@@ -7,6 +7,10 @@ import { loadCommands } from './loadCommands.js';
 import { registerGuildCommands } from './lib/registerCommands.js';
 import { scheduleWeeklyPost, catchUpWeeklyPost } from './services/weeklyPost.js';
 import { scheduleDailyDigest, catchUpDailyDigest } from './services/dailyDigest.js';
+import {
+  checkCodexResetWatcher,
+  scheduleCodexResetWatcher,
+} from './services/codexResetWatcher.js';
 import { getEffectiveConfig } from './services/config.js';
 
 import { registerEventHandlers } from './eventRegistry.js';
@@ -81,6 +85,15 @@ async function main() {
       );
     } else {
       console.log('[startup] daily digest disabled via DAILY_DIGEST_ENABLED=false');
+    }
+
+    if (config.codexResetEnabled) {
+      scheduleCodexResetWatcher(client);
+      checkCodexResetWatcher(client, { trigger: 'boot' }).catch((err) =>
+        console.error('[codexReset] boot check failed:', err.message),
+      );
+    } else {
+      console.log('[startup] Codex reset watcher disabled via CODEX_RESET_ENABLED=false');
     }
   });
 
