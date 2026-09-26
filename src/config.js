@@ -97,6 +97,13 @@ export const config = {
   dailyDigestChannelId: process.env.DAILY_DIGEST_CHANNEL_ID || null,
   dailyDigestEnabled: (process.env.DAILY_DIGEST_ENABLED || 'true').toLowerCase() !== 'false',
   dailyDigestTimeUtc: process.env.DAILY_DIGEST_TIME_UTC || '20:00',
+
+  // Official Codex reset watcher. The private channel permissions define the audience,
+  // so this feature never needs or sends a role mention.
+  codexResetChannelId:
+    process.env.CODEX_RESET_CHANNEL_ID || '1553439895924510802',
+  codexResetEnabled:
+    (process.env.CODEX_RESET_ENABLED || 'true').toLowerCase() !== 'false',
   dailyDigestSkipQuiet:
     (process.env.DAILY_DIGEST_SKIP_QUIET || 'false').toLowerCase() === 'true',
   dailyDigestName: process.env.DAILY_DIGEST_NAME || 'Byte',
