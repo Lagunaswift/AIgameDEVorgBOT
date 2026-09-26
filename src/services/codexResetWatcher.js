@@ -8,11 +8,16 @@ export const CODEX_RESET_SOURCE_URL =
 export const CODEX_RESET_CHECK_CRON = '*/30 * * * *';
 
 const WATCHER_DOC_ID = 'openai-banked-codex-resets';
+const MOCK_DOC_ID = 'codex-reset-live-test-2026-09-26';
 const MAX_SOURCE_BYTES = 2_000_000;
 const FETCH_TIMEOUT_MS = 15_000;
 
 function watcherRef() {
   return getDb().collection('externalWatchers').doc(WATCHER_DOC_ID);
+}
+
+function mockRef() {
+  return getDb().collection('oneShotOperations').doc(MOCK_DOC_ID);
 }
 
 function decodeHtmlEntities(value) {
@@ -81,6 +86,17 @@ export function buildCodexResetAlert() {
     'Check **Settings → Usage** to see whether your account received a reset and any expiry or eligibility details.',
     '',
     `Official source: <${CODEX_RESET_SOURCE_URL}>`,
+  ].join('\n');
+}
+
+export function buildCodexResetMockAlert() {
+  return [
+    '**TEST — Codex reset alert**',
+    '',
+    'This is a live delivery test from Byte running on Railway.',
+    '**No Codex reset has been detected.**',
+    '',
+    'When OpenAI changes the official Codex reset announcement, the real alert will appear in this private channel automatically.',
   ].join('\n');
 }
 
@@ -189,6 +205,47 @@ export async function checkCodexResetWatcher(
     fingerprint: current.fingerprint,
     previousFingerprint: previous.fingerprint || null,
   };
+}
+
+export async function postCodexResetMockOnce(client) {
+  if (!config.codexResetChannelId) return { status: 'no-config' };
+
+  const ref = mockRef();
+  try {
+    await ref.create({
+      state: 'claimed',
+      claimedAt: serverTimestamp(),
+      channelId: config.codexResetChannelId,
+    });
+  } catch (err) {
+    if (err?.code === 6 || err?.code === 'already-exists') {
+      return { status: 'already' };
+    }
+    throw err;
+  }
+
+  try {
+    const channel = await fetchAlertChannel(client);
+    const message = await channel.send({
+      content: buildCodexResetMockAlert(),
+      allowedMentions: { parse: [] },
+    });
+
+    await ref.set(
+      {
+        state: 'sent',
+        sentAt: serverTimestamp(),
+        messageId: message.id,
+      },
+      { merge: true },
+    );
+
+    console.log(`[codexReset] live test posted to ${config.codexResetChannelId}`);
+    return { status: 'posted', messageId: message.id };
+  } catch (err) {
+    await ref.delete().catch(() => {});
+    throw err;
+  }
 }
 
 export function scheduleCodexResetWatcher(client) {
