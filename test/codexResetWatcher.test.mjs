@@ -3,7 +3,6 @@ import test from 'node:test';
 import {
   CODEX_RESET_SOURCE_URL,
   buildCodexResetAlert,
-  buildCodexResetMockAlert,
   extractResetAnnouncement,
   fingerprintResetAnnouncement,
   htmlToPlainText,
@@ -58,14 +57,5 @@ test('alert is channel-only and links the official OpenAI source', () => {
   const alert = buildCodexResetAlert();
   assert.match(alert, /Codex reset update/);
   assert.ok(alert.includes(CODEX_RESET_SOURCE_URL));
-  assert.doesNotMatch(alert, /<@&\d+>/);
-});
-
-
-test('live mock is unmistakably labelled and contains no role mention', () => {
-  const alert = buildCodexResetMockAlert();
-  assert.match(alert, /TEST — Codex reset alert/);
-  assert.match(alert, /No Codex reset has been detected/);
-  assert.match(alert, /Railway/);
   assert.doesNotMatch(alert, /<@&\d+>/);
 });
