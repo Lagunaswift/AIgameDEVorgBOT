@@ -231,7 +231,6 @@ export function candidatesFromVerifiedTimeline(data) {
 
 function statusUpdateIsResetAction(body) {
   const text = String(body || '');
-  if (!/\bcodex\b/i.test(text)) return false;
   return (
     /\bwe (?:have )?(?:reset|are resetting|will reset)\b/i.test(text) ||
     /\busage limits? (?:have been|are being|will be) reset\b/i.test(text) ||
