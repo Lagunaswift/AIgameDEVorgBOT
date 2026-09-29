@@ -98,8 +98,9 @@ export const config = {
   dailyDigestEnabled: (process.env.DAILY_DIGEST_ENABLED || 'true').toLowerCase() !== 'false',
   dailyDigestTimeUtc: process.env.DAILY_DIGEST_TIME_UTC || '20:00',
 
-  // Official Codex reset watcher. The private channel permissions define the audience,
-  // so this feature never needs or sends a role mention.
+  // Multi-source Codex reset watcher. The private channel permissions define the audience,
+  // so this feature never needs or sends a role mention. Tibo's public reset announcements
+  // are the fast path, with a verified reset timeline plus OpenAI Status/Help fallbacks.
   codexResetChannelId:
     process.env.CODEX_RESET_CHANNEL_ID || '1553439895924510802',
   codexResetEnabled:

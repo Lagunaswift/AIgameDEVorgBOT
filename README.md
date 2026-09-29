@@ -57,6 +57,12 @@ Each half keeps its own dedup record and failed sends release newly acquired cla
 Missing images still use the modern bounded owner-reply search; the request asks for a
 fresh reply attachment, not a first-post edit. No automatic post deletion is implemented.
 
+Codex reset alerts are sent only to the configured private channel. The watcher polls every
+two minutes and treats Tibo's explicit public reset/banked-reset announcements as the fast
+signal, then cross-covers them with the verified codex-reset.com timeline and first-party
+OpenAI Status/Help sources. Firestore event claims prevent replay after restart. Vague reset
+hints, forecasts, ordinary plan changes, and personal rolling-window resets do not alert.
+
 `EXCLUDED_TAG_NAMES` (default `just-sharing`) and optional `EXCLUDED_TAG_IDS` apply to question
 reminders and review discovery. Exact IDs survive renaming; names need forum tag metadata.
 The consolidation does not create/apply a tag or impose a new hard-coded production ID.
