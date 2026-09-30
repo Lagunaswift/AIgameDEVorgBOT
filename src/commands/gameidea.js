@@ -1,9 +1,11 @@
-// /gameidea [theme] — everyone. Byte rolls a random ingredient collision and develops it
+// /gameidea [theme] [style] — everyone. Byte rolls a random ingredient collision and develops it
 // into a game pitch (services/gameIdeas.js). A supplied theme is the primary creative
 // constraint; without one, the random collision drives the pitch. Replies publicly: the
 // fun is communal, and the seed footer shows the machinery. Throttled per user (cooldown;
 // mods bypass) and per day (server-wide cap on API calls).
 
+import { STYLE_CHOICES } from '../lib/gameIdeaScreenshot.js';
+import { queueGameIdeaImage } from '../services/gameIdeaImages.js';
 import { SlashCommandBuilder } from 'discord.js';
 import { isMod } from '../lib/permissions.js';
 import { parseDisplayEmoji } from '../lib/emoji.js';
@@ -18,6 +20,11 @@ export const data = new SlashCommandBuilder()
       .setName('theme')
       .setDescription('Optional theme, such as "horror", "cats", or "co-op"')
       .setMaxLength(120),
+  )
+  .addStringOption((o) =>
+    o.setName('style')
+      .setDescription('Optional art style for the automatic gameplay image.')
+      .addChoices({ name: 'Automatic', value: 'auto' }, ...STYLE_CHOICES),
   );
 
 function formatWait(seconds) {
@@ -63,8 +70,16 @@ export async function execute(interaction) {
         ? `-# ${byteTag} seed: ${res.seedLabel} · model unavailable; the cloud has once again proved my point`
         : `-# ${byteTag} seed: ${res.seedLabel} · idea #${res.number}`;
 
-  await interaction.editReply({
+  const message = await interaction.editReply({
     content: `${res.text}\n\n${footer}`,
     allowedMentions: { parse: [] },
   });
+
+  // The written idea is already delivered. This only queues the optional sidecar;
+  // image failures must never enter the slash-command error path or replace the idea.
+  void queueGameIdeaImage({
+    result: res, message, client: interaction.client,
+    style: interaction.options.getString('style'),
+    theme: interaction.options.getString('theme'),
+  }).catch(() => console.error('[gameIdeaImages] image_queue_failed'));
 }
