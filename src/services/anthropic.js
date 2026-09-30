@@ -14,6 +14,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { config as envConfig } from '../config.js';
+import { truncateWellFormed } from '../lib/unicodeText.js';
 
 let client = null;
 
@@ -35,11 +36,13 @@ export function getAnthropic() {
 // >50%-of-cap guards stop a pathological input from truncating to almost nothing.
 export function scrubModelOutput(text, { maxChars = 1100 } = {}) {
   let out = text
+    .toWellFormed()
     .replace(/@(everyone|here)/gi, '@\u200b$1')
     .replace(/<@[!&]?\d+>/g, '')
     .trim();
+  if (maxChars === 0) return '';
   if (out.length > maxChars) {
-    const cut = out.slice(0, maxChars);
+    const cut = truncateWellFormed(out, maxChars);
     const lastLine = cut.lastIndexOf('\n');
     const lastSentence = cut.lastIndexOf('. ');
     if (lastLine > maxChars * 0.5) {
@@ -47,10 +50,12 @@ export function scrubModelOutput(text, { maxChars = 1100 } = {}) {
     } else if (lastSentence > maxChars * 0.5) {
       out = cut.slice(0, lastSentence + 1);
     } else {
-      out = `${cut.slice(0, cut.lastIndexOf(' ')).trimEnd()}…`;
+      const lastWord = cut.lastIndexOf(' ');
+      const end = lastWord > 0 ? lastWord : Math.max(0, maxChars - 1);
+      out = `${truncateWellFormed(cut, end).trimEnd()}…`;
     }
   }
-  return out;
+  return out.toWellFormed();
 }
 
 // One bounded text-only call. Returns { text, model, usage } or null (refusal / empty).
@@ -63,8 +68,10 @@ export async function callClaude({ model, system, userContent, maxTokens = 8000,
   const request = {
     model,
     max_tokens: maxTokens,
-    system,
-    messages: [{ role: 'user', content: userContent }],
+    // Final transport boundary: names or upstream truncation may contain lone
+    // surrogates even when the transcript's own cuts are safe.
+    system: system.toWellFormed(),
+    messages: [{ role: 'user', content: userContent.toWellFormed() }],
   };
 
   const api = getAnthropic();

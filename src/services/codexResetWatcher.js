@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import cron from 'node-cron';
 import { config } from '../config.js';
 import { getDb, serverTimestamp } from '../firebase.js';
+import { createSourcePoller } from '../lib/sourcePoller.js';
 
 export const CODEX_RESET_HELP_URL =
   'https://help.openai.com/en/articles/20001498-how-banked-codex-resets-work';
@@ -17,6 +18,7 @@ const MAX_SOURCE_BYTES = 2_000_000;
 const FETCH_TIMEOUT_MS = 15_000;
 const BOOT_BACKFILL_MS = 24 * 60 * 60 * 1000;
 const USER_AGENT = 'AIGAMEDEV-CodexResetWatcher/2.0 (+https://www.aigamedevs.org/)';
+const pollResetSource = createSourcePoller();
 
 function watcherRef() {
   return getDb().collection('externalWatchers').doc(WATCHER_DOC_ID);
@@ -55,9 +57,9 @@ async function fetchBoundedText(url, { accept = 'text/plain', fetchImpl = fetch 
 
   if (!response.ok) {
     const retryAfter = response.headers.get('retry-after');
-    throw new Error(
+    throw Object.assign(new Error(
       `${url} returned HTTP ${response.status}${retryAfter ? ` (retry-after ${retryAfter})` : ''}.`,
-    );
+    ), { status: response.status, retryAfter });
   }
 
   const contentLength = Number(response.headers.get('content-length') || 0);
@@ -321,25 +323,25 @@ export function buildCodexResetAlert(event) {
   return lines.join('\n');
 }
 
-export async function fetchResetSources(fetchImpl = fetch) {
+export async function fetchResetSources(fetchImpl = fetch, { pollSource = pollResetSource } = {}) {
+  // Start requests lazily so an open circuit does not make another HTTP request.
   const requests = {
-    feed: fetchJson(CODEX_RESET_FEED_URL, fetchImpl),
-    timeline: fetchJson(CODEX_RESET_TIMELINE_URL, fetchImpl),
-    status: fetchJson(OPENAI_STATUS_INCIDENTS_URL, fetchImpl),
-    help: fetchBoundedText(CODEX_RESET_HELP_URL, {
-      accept: 'text/html,application/xhtml+xml',
-      fetchImpl,
-    }),
+    feed: () => fetchJson(CODEX_RESET_FEED_URL, fetchImpl),
+    timeline: () => fetchJson(CODEX_RESET_TIMELINE_URL, fetchImpl),
+    status: () => fetchJson(OPENAI_STATUS_INCIDENTS_URL, fetchImpl),
+    help: async () => {
+      const html = await fetchBoundedText(CODEX_RESET_HELP_URL, {
+        accept: 'text/html,application/xhtml+xml',
+        fetchImpl,
+      });
+      // A 200 challenge page or changed markup is not a healthy article read.
+      extractResetAnnouncement(html);
+      return html;
+    },
   };
 
   const entries = await Promise.all(
-    Object.entries(requests).map(async ([name, promise]) => {
-      try {
-        return [name, { ok: true, value: await promise }];
-      } catch (err) {
-        return [name, { ok: false, error: err }];
-      }
-    }),
+    Object.entries(requests).map(async ([name, load]) => [name, await pollSource(name, load)]),
   );
 
   return Object.fromEntries(entries);
@@ -428,11 +430,33 @@ export async function checkCodexResetWatcher(
 
   const sources = await fetchResetSources(fetchImpl);
   for (const [name, result] of Object.entries(sources)) {
-    if (!result.ok) console.error(`[codexReset] ${name} source failed:`, result.error.message);
+    if (!result.ok && !result.skipped) {
+      console.warn(
+        `[codexReset] ${name} source unavailable: ${result.error.message} ` +
+        `Next attempt at ${new Date(result.nextAttemptAt).toISOString()}; other sources continue independently.`,
+      );
+    } else if (result.ok && result.recovered) {
+      console.info(`[codexReset] ${name} source recovered; normal polling resumed.`);
+    }
   }
 
+  const sourceHealth = Object.fromEntries(
+    Object.entries(sources).map(([name, result]) => [name, result.ok]),
+  );
+  const sourceRetryAt = Object.fromEntries(
+    Object.entries(sources).map(([name, result]) => [
+      name, result.ok ? null : new Date(result.nextAttemptAt).toISOString(),
+    ]),
+  );
+
   if (!sources.feed.ok && !sources.timeline.ok && !sources.status.ok && !sources.help.ok) {
-    return { status: 'source-failed' };
+    if (Object.values(sources).some((result) => !result.skipped)) {
+      console.error('[codexReset] all sources unavailable; reset alerts cannot currently be verified.');
+    }
+    await watcherRef().set({
+      lastCheckedAt: serverTimestamp(), lastTrigger: trigger, sourceHealth, sourceRetryAt,
+    }, { merge: true });
+    return { status: 'source-failed', sourceHealth, sourceRetryAt };
   }
 
   let help = null;
@@ -502,9 +526,8 @@ export async function checkCodexResetWatcher(
     baselineAt,
     lastCheckedAt: serverTimestamp(),
     lastTrigger: trigger,
-    sourceHealth: Object.fromEntries(
-      Object.entries(sources).map(([name, result]) => [name, result.ok]),
-    ),
+    sourceHealth,
+    sourceRetryAt,
   };
   if (!snap.exists || !previous.baselineAt) stateUpdate.seededAt = serverTimestamp();
   if (help) stateUpdate.helpFingerprint = help.fingerprint;
