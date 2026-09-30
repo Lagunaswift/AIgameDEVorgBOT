@@ -21,6 +21,7 @@
 import { anthropicConfigured, callClaude, scrubModelOutput } from './anthropic.js';
 import { BYTE_CHARACTER } from '../lib/byte.js';
 import { fetchPublicRecapChannel } from './chatSummaryVisibility.js';
+import { truncateWellFormed } from '../lib/unicodeText.js';
 
 // 100 messages per page; 12 pages bounds both the REST calls and the read volume for a
 // very busy channel. Oldest pages beyond the cap are dropped (newest chat wins).
@@ -85,7 +86,7 @@ export async function collectTranscript(client, channelIds, { start, end, guildI
         const who = msg.member?.displayName || msg.author.displayName || msg.author.username;
         channelCollected.push({
           ts: msg.createdTimestamp,
-          line: `[#${channel.name}] ${who}: ${text.slice(0, MAX_LINE_CHARS)}`,
+          line: `[#${channel.name}] ${who}: ${truncateWellFormed(text, MAX_LINE_CHARS)}`.toWellFormed(),
         });
       }
 
